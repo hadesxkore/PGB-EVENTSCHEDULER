@@ -8,6 +8,7 @@ import {
   CalendarDays, 
   MessageSquare, 
   Building2,
+  Package,
   PanelLeft,
   LogOut
 } from 'lucide-react';
@@ -36,7 +37,8 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
     { icon: LayoutDashboard, label: 'Dashboard', href: '/users/dashboard' },
     { icon: CalendarPlus, label: 'Request Event', href: '/users/request-event' },
     { icon: Calendar, label: 'My Events', href: '/users/my-events' },
-    { icon: CalendarDays, label: 'Calendar', href: '/users/calendar' },
+    { icon: CalendarDays, label: 'My Calendar', href: '/users/my-calendar' },
+    { icon: Package, label: 'My Requirements', href: '/users/my-requirements' },
     { icon: Calendar, label: 'All Events', href: '/users/all-events' },
     { icon: MessageSquare, label: 'Messages', href: '/users/messages' },
     { icon: Building2, label: 'Tagged Departments', href: '/users/tagged-departments' },

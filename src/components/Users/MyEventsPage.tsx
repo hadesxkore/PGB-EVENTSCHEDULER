@@ -38,7 +38,6 @@ import {
   Trash2,
   Plus,
   RefreshCw,
-  FileText as DescriptionIcon,
   CheckCircle,
   XCircle,
   AlertCircle,
@@ -91,7 +90,7 @@ interface Event {
   };
   taggedDepartments: string[];
   departmentRequirements: any;
-  status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'completed';
+  status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'completed' | 'cancelled' | 'ongoing';
   submittedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -123,12 +122,13 @@ const MyEventsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<string>('newest');
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [showEventModal, setShowEventModal] = useState(false);
-  const [selectedDescription, setSelectedDescription] = useState<string>('');
-  const [showDescriptionModal, setShowDescriptionModal] = useState(false);
   const [selectedEventFiles, setSelectedEventFiles] = useState<Event | null>(null);
   const [showFilesModal, setShowFilesModal] = useState(false);
+  const [selectedEventDepartments, setSelectedEventDepartments] = useState<Event | null>(null);
+  const [showDepartmentsModal, setShowDepartmentsModal] = useState(false);
   const [selectedEditEvent, setSelectedEditEvent] = useState<Event | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editFormData, setEditFormData] = useState({
@@ -171,16 +171,76 @@ const MyEventsPage: React.FC = () => {
     fetchMyEvents();
   }, []);
 
-  // Filter events based on search and status
-  const filteredEvents = events.filter(event => {
-    const matchesSearch = event.eventTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         event.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         event.requestor.toLowerCase().includes(searchTerm.toLowerCase());
+  // Get dynamic status based on dates
+  const getDynamicStatus = (event: Event) => {
+    const currentDate = new Date();
+    currentDate.setHours(0, 0, 0, 0); // Reset to start of day for accurate comparison
     
-    const matchesStatus = statusFilter === 'all' || event.status === statusFilter;
+    const endDate = new Date(event.endDate);
+    endDate.setHours(23, 59, 59, 999); // Set to end of day
     
-    return matchesSearch && matchesStatus;
-  });
+    const startDate = new Date(event.startDate);
+    startDate.setHours(0, 0, 0, 0); // Set to start of day
+    
+    console.log('Event:', event.eventTitle);
+    console.log('Current Date:', currentDate.toDateString());
+    console.log('Start Date:', startDate.toDateString());
+    console.log('End Date:', endDate.toDateString());
+    console.log('Original Status:', event.status);
+    
+    // If event has ended, mark as completed (unless it's rejected or cancelled)
+    if (currentDate > endDate && event.status !== 'rejected' && event.status !== 'cancelled') {
+      console.log('→ Marking as completed');
+      return 'completed';
+    }
+    
+    // If event is approved/submitted and starts in the future, mark as incoming
+    if ((event.status === 'approved' || event.status === 'submitted') && startDate > currentDate) {
+      console.log('→ Marking as incoming');
+      return 'incoming';
+    }
+    
+    // If event is happening today or ongoing (approved/submitted), mark as ongoing
+    if ((event.status === 'approved' || event.status === 'submitted') && startDate <= currentDate && currentDate <= endDate) {
+      console.log('→ Marking as ongoing');
+      return 'ongoing';
+    }
+    
+    console.log('→ Keeping original status:', event.status);
+    return event.status;
+  };
+
+  // Filter and sort events
+  const filteredAndSortedEvents = events
+    .map(event => ({
+      ...event,
+      dynamicStatus: getDynamicStatus(event)
+    }))
+    .filter(event => {
+      const matchesSearch = event.eventTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           event.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           event.requestor.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesStatus = statusFilter === 'all' || event.dynamicStatus === statusFilter;
+      
+      return matchesSearch && matchesStatus;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'newest':
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        case 'oldest':
+          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        case 'date-asc':
+          return new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
+        case 'date-desc':
+          return new Date(b.startDate).getTime() - new Date(a.startDate).getTime();
+        case 'title':
+          return a.eventTitle.localeCompare(b.eventTitle);
+        default:
+          return 0;
+      }
+    });
 
   // Get status badge variant and icon
   const getStatusInfo = (status: string) => {
@@ -216,6 +276,26 @@ const MyEventsPage: React.FC = () => {
           icon: <CheckCircle className="w-3 h-3" />,
           label: 'Completed',
           className: 'bg-blue-100 text-blue-800 border-blue-200'
+        };
+      case 'incoming':
+        return { 
+          variant: 'default' as const, 
+          icon: <CalendarIcon className="w-3 h-3" />,
+          label: 'Incoming',
+          className: 'bg-purple-100 text-purple-800 border-purple-200'
+        };
+      case 'cancelled':
+        return { 
+          variant: 'destructive' as const, 
+          icon: <XCircle className="w-3 h-3" />,
+          label: 'Cancelled'
+        };
+      case 'ongoing':
+        return { 
+          variant: 'default' as const, 
+          icon: <Clock className="w-3 h-3" />,
+          label: 'Ongoing',
+          className: 'bg-orange-100 text-orange-800 border-orange-200'
         };
       default:
         return { 
@@ -263,16 +343,17 @@ const MyEventsPage: React.FC = () => {
     }
   };
 
-  // Handle description modal
-  const handleShowDescription = (description: string) => {
-    setSelectedDescription(description);
-    setShowDescriptionModal(true);
-  };
 
   // Handle files modal
   const handleShowFiles = (event: Event) => {
     setSelectedEventFiles(event);
     setShowFilesModal(true);
+  };
+
+  // Handle departments modal
+  const handleShowDepartments = (event: Event) => {
+    setSelectedEventDepartments(event);
+    setShowDepartmentsModal(true);
   };
 
   // Handle edit event
@@ -329,9 +410,9 @@ const MyEventsPage: React.FC = () => {
   };
 
   return (
-    <div className="p-4 max-w-[95%] mx-auto">
+    <div className="p-2 max-w-[98%] mx-auto">
       <Card className="shadow-lg">
-        <CardContent className="p-6 space-y-6">
+        <CardContent className="p-8 space-y-6">
           {/* Header */}
           <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -403,7 +484,7 @@ const MyEventsPage: React.FC = () => {
               <div>
                 <p className="text-sm text-muted-foreground">Approved</p>
                 <p className="text-2xl font-bold text-green-600">
-                  {events.filter(e => e.status === 'approved').length}
+                  {events.filter(e => getDynamicStatus(e) === 'approved').length}
                 </p>
               </div>
               <CheckCircle className="w-8 h-8 text-green-600" />
@@ -417,7 +498,7 @@ const MyEventsPage: React.FC = () => {
               <div>
                 <p className="text-sm text-muted-foreground">Completed</p>
                 <p className="text-2xl font-bold text-blue-600">
-                  {events.filter(e => e.status === 'completed').length}
+                  {events.filter(e => getDynamicStatus(e) === 'completed').length}
                 </p>
               </div>
               <CheckCircle className="w-8 h-8 text-blue-600" />
@@ -446,21 +527,41 @@ const MyEventsPage: React.FC = () => {
                   />
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-gray-500" />
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-40">
-                    <SelectValue placeholder="Filter by status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="submitted">Submitted</SelectItem>
-                    <SelectItem value="approved">Approved</SelectItem>
-                    <SelectItem value="rejected">Rejected</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-gray-500" />
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-40">
+                      <SelectValue placeholder="Filter by status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="draft">Draft</SelectItem>
+                      <SelectItem value="submitted">Submitted</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="incoming">Incoming</SelectItem>
+                      <SelectItem value="ongoing">Ongoing</SelectItem>
+                      <SelectItem value="completed">Completed</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                      <SelectItem value="cancelled">Cancelled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-500">Sort by:</span>
+                  <Select value={sortBy} onValueChange={setSortBy}>
+                    <SelectTrigger className="w-44">
+                      <SelectValue placeholder="Sort by" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="newest">Newest First</SelectItem>
+                      <SelectItem value="oldest">Oldest First</SelectItem>
+                      <SelectItem value="date-asc">Event Date (Earliest)</SelectItem>
+                      <SelectItem value="date-desc">Event Date (Latest)</SelectItem>
+                      <SelectItem value="title">Title (A-Z)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
           </CardContent>
@@ -483,7 +584,7 @@ const MyEventsPage: React.FC = () => {
               </div>
             </CardContent>
           </Card>
-        ) : filteredEvents.length === 0 ? (
+        ) : filteredAndSortedEvents.length === 0 ? (
           <Card>
             <CardContent className="p-8 text-center">
               <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
@@ -505,8 +606,8 @@ const MyEventsPage: React.FC = () => {
           </Card>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {filteredEvents.map((event, index) => {
-            const statusInfo = getStatusInfo(event.status);
+            {filteredAndSortedEvents.map((event, index) => {
+            const statusInfo = getStatusInfo(event.dynamicStatus);
             
             return (
               <motion.div
@@ -521,13 +622,20 @@ const MyEventsPage: React.FC = () => {
                       <div className="flex-1 min-w-0 space-y-3">
                         {/* Status Badge and Right Actions */}
                         <div className="flex items-center justify-between">
-                          <Badge 
-                            variant={statusInfo.variant}
-                            className={`gap-1 ${statusInfo.className || ''}`}
-                          >
-                            {statusInfo.icon}
-                            {statusInfo.label}
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge 
+                              variant={statusInfo.variant}
+                              className={`gap-1 ${statusInfo.className || ''}`}
+                            >
+                              {statusInfo.icon}
+                              {statusInfo.label}
+                            </Badge>
+                            {event.dynamicStatus !== event.status && (
+                              <span className="text-xs text-gray-500">
+                                (Auto-updated)
+                              </span>
+                            )}
+                          </div>
                           
                           {/* Right Side Actions */}
                           <div className="flex items-center gap-2">
@@ -608,16 +716,16 @@ const MyEventsPage: React.FC = () => {
                             className="gap-1 h-7 px-2 text-xs"
                           >
                             <Eye className="w-3 h-3" />
-                            View
+                            Details
                           </Button>
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleShowDescription(event.description || 'No description available')}
+                            onClick={() => handleShowDepartments(event)}
                             className="gap-1 h-7 px-2 text-xs"
                           >
-                            <DescriptionIcon className="w-3 h-3" />
-                            Description
+                            <Building2 className="w-3 h-3" />
+                            Tagged Departments
                           </Button>
                           <Button
                             variant="outline"
@@ -711,6 +819,20 @@ const MyEventsPage: React.FC = () => {
 
               <Separator />
 
+              {/* Description */}
+              {selectedEvent.description && (
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 mb-3">Description</h4>
+                  <div className={`bg-gray-50 rounded-lg p-4 border border-gray-200 ${selectedEvent.description.length > 800 ? 'max-h-48 overflow-y-auto scroll-smooth' : ''}`}>
+                    <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">
+                      {selectedEvent.description}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <Separator />
+
               {/* Schedule */}
               <div>
                 <h4 className="text-sm font-medium text-gray-700 mb-3">Schedule</h4>
@@ -738,21 +860,6 @@ const MyEventsPage: React.FC = () => {
 
               <Separator />
 
-              {/* Tagged Departments */}
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-3">Tagged Departments</h4>
-                <div className="flex flex-wrap gap-2">
-                  {selectedEvent.taggedDepartments.map((dept, index) => (
-                    <Badge key={index} variant="outline" className="gap-1">
-                      <Building2 className="w-3 h-3" />
-                      {dept}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-
-              <Separator />
-
               {/* Timestamps - Bottom Right */}
               <div className="flex justify-end">
                 {selectedEvent.submittedAt && (
@@ -766,29 +873,172 @@ const MyEventsPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Description Modal */}
-      <Dialog open={showDescriptionModal} onOpenChange={setShowDescriptionModal}>
-        <DialogContent className="max-w-2xl w-[85vw] max-h-[80vh] p-6">
+
+      {/* Tagged Departments Modal */}
+      <Dialog open={showDepartmentsModal} onOpenChange={setShowDepartmentsModal}>
+        <DialogContent className="!max-w-5xl !w-[85vw] max-h-[80vh] overflow-y-auto p-8" style={{ width: '85vw', maxWidth: '1024px' }}>
           <DialogHeader className="pb-4">
             <DialogTitle className="text-xl font-medium text-gray-900">
-              Event Description
+              Tagged Departments
             </DialogTitle>
-            <DialogDescription className="text-sm text-gray-600 mt-1">
-              Detailed information about this event
+            <DialogDescription className="text-sm text-gray-600">
+              Departments involved in this event and their requirements
             </DialogDescription>
           </DialogHeader>
           
-          <div className="flex-1 overflow-hidden">
-            <div className="bg-white rounded-md p-5 border border-gray-200 shadow-sm max-h-[50vh] overflow-y-auto">
-              <p className="text-gray-800 leading-relaxed text-base whitespace-pre-wrap font-normal">
-                {selectedDescription}
-              </p>
+          {selectedEventDepartments && (
+            <div className="space-y-6">
+              {/* Tagged Departments List */}
+              <div>
+                <h4 className="text-base font-medium text-gray-800 mb-4 flex items-center gap-2">
+                  <Building2 className="w-5 h-5 text-blue-600" />
+                  Tagged Departments ({selectedEventDepartments.taggedDepartments.length})
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {selectedEventDepartments.taggedDepartments.map((dept, index) => (
+                    <div key={index} className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                      <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                        <Building2 className="w-4 h-4 text-blue-600" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-gray-900">{dept}</p>
+                        <p className="text-xs text-blue-600">Department</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Department Requirements */}
+              {selectedEventDepartments.departmentRequirements && Object.keys(selectedEventDepartments.departmentRequirements).length > 0 && (
+                <div>
+                  <h4 className="text-base font-medium text-gray-800 mb-4 flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-orange-600" />
+                    Department Requirements
+                  </h4>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {Object.entries(selectedEventDepartments.departmentRequirements).map(([dept, requirements]: [string, any], index) => {
+                      // Parse the requirements if it's a string containing JSON-like data
+                      let parsedRequirements = requirements;
+                      
+                      if (typeof requirements === 'string') {
+                        // Check if it contains numbered JSON objects
+                        const lines = requirements.split('\n').filter(line => line.trim());
+                        if (lines.length > 0 && lines[0].match(/^\d+:/)) {
+                          parsedRequirements = lines.map(line => {
+                            const match = line.match(/^\d+:(.+)$/);
+                            if (match) {
+                              try {
+                                return JSON.parse(match[1]);
+                              } catch {
+                                return { name: line };
+                              }
+                            }
+                            return { name: line };
+                          });
+                        }
+                      }
+                      
+                      return (
+                        <div key={index} className="p-4 bg-orange-50 rounded-lg border border-orange-200">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Building2 className="w-4 h-4 text-orange-600" />
+                            <h5 className="font-medium text-gray-900">{dept}</h5>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {Array.isArray(parsedRequirements) ? (
+                              parsedRequirements.map((req: any, reqIndex: number) => (
+                                <div key={reqIndex} className="p-3 bg-white rounded-md border border-orange-100">
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex-1">
+                                      <h6 className="text-sm font-medium text-gray-900 mb-1">
+                                        {req.name || `Requirement ${reqIndex + 1}`}
+                                      </h6>
+                                      <p className="text-xs text-gray-600 mb-2">
+                                        <span className="font-medium">Notes:</span> {req.notes || 'N/A'}
+                                      </p>
+                                    </div>
+                                    <div className="ml-3">
+                                      {req.selected !== undefined && (
+                                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                          req.selected 
+                                            ? 'bg-green-100 text-green-800' 
+                                            : 'bg-gray-100 text-gray-800'
+                                        }`}>
+                                          {req.selected ? 'Required' : 'Optional'}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))
+                            ) : typeof parsedRequirements === 'object' && parsedRequirements !== null ? (
+                              Object.entries(parsedRequirements).map(([key, value]: [string, any], reqIndex) => (
+                                <div key={reqIndex} className="text-sm">
+                                  <span className="font-medium text-gray-700 capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}:</span>
+                                  <span className="ml-2 text-gray-600">
+                                    {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
+                                  </span>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-sm text-gray-600">{String(parsedRequirements)}</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Notes Section */}
+              <div>
+                <h4 className="text-base font-medium text-gray-800 mb-4 flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-green-600" />
+                  Notes & Additional Information
+                </h4>
+                <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 bg-green-500 rounded-full mt-2"></div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Event Coordination</p>
+                        <p className="text-sm text-gray-600">All tagged departments will be notified and are expected to coordinate for this event.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 bg-green-500 rounded-full mt-2"></div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Requirements Status</p>
+                        <p className="text-sm text-gray-600">Department requirements are based on the event details and participant count.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 bg-green-500 rounded-full mt-2"></div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Contact Information</p>
+                        <p className="text-sm text-gray-600">For questions, contact the event requestor at {selectedEventDepartments.contactEmail}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* No Departments Message */}
+              {selectedEventDepartments.taggedDepartments.length === 0 && (
+                <div className="text-center py-8">
+                  <Building2 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">No Departments Tagged</h3>
+                  <p className="text-gray-500">This event doesn't have any departments tagged yet.</p>
+                </div>
+              )}
             </div>
-          </div>
+          )}
           
-          <div className="flex justify-center pt-4">
+          <div className="flex justify-center pt-4 mt-6">
             <Button 
-              onClick={() => setShowDescriptionModal(false)}
+              onClick={() => setShowDepartmentsModal(false)}
               variant="outline"
               className="px-6 py-2"
             >

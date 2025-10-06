@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import eventRoutes from './routes/events.js';
 import userRoutes from './routes/users.js';
 import departmentRoutes from './routes/departments.js';
+import resourceAvailabilityRoutes from './routes/resourceAvailability.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -36,6 +37,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/api/events', eventRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/departments', departmentRoutes);
+app.use('/api/resource-availability', resourceAvailabilityRoutes);
 
 // Health check route
 app.get('/api/health', (req, res) => {

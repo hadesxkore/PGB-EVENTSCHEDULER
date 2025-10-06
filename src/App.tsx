@@ -5,6 +5,8 @@ import MainLayout from './components/Users/MainLayout'
 import Dashboard from './components/Users/Dashboard'
 import RequestEventPage from './components/Users/RequestEventPage'
 import MyEventsPage from './components/Users/MyEventsPage'
+import MyCalendarPage from './components/Users/MyCalendarPage'
+import MyRequirementsPage from './components/Users/MyRequirementsPage'
 import AdminMainLayout from './components/Admin/AdminMainLayout'
 import AdminDashboard from './components/Admin/AdminDashboard'
 import AllEventsPage from './components/Admin/AllEventsPage'
@@ -39,6 +41,8 @@ function App() {
                 <Route path="dashboard" element={<Dashboard />} />
                 <Route path="request-event" element={<RequestEventPage />} />
                 <Route path="my-events" element={<MyEventsPage />} />
+                <Route path="my-calendar" element={<MyCalendarPage />} />
+                <Route path="my-requirements" element={<MyRequirementsPage />} />
                 <Route path="calendar" element={<div className="p-6"><h1 className="text-2xl font-bold">Calendar</h1><p>Coming soon...</p></div>} />
                 <Route path="all-events" element={<div className="p-6"><h1 className="text-2xl font-bold">All Events</h1><p>Coming soon...</p></div>} />
                 <Route path="messages" element={<div className="p-6"><h1 className="text-2xl font-bold">Messages</h1><p>Coming soon...</p></div>} />
