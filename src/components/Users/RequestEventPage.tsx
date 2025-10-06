@@ -48,7 +48,10 @@ import {
   Plus,
   Trash2,
   Info,
-  Check
+  Check,
+  AlertTriangle,
+  Package,
+  Settings
 } from 'lucide-react';
 
 interface DepartmentRequirement {
@@ -56,6 +59,7 @@ interface DepartmentRequirement {
   name: string;
   selected: boolean;
   notes: string;
+  quantity?: number;  // For physical requirements
   type?: 'physical' | 'service';
   totalQuantity?: number;
   isAvailable?: boolean;
@@ -120,14 +124,13 @@ const RequestEventPage: React.FC = () => {
   const [selectedLocation, setSelectedLocation] = useState<string>('');
   const [showGovModal, setShowGovModal] = useState(false);
   const [govFiles, setGovFiles] = useState<{
-    brieferTemplate: File | null;
-    availableForDL: File | null;
-    programme: File | null;
+    [key: string]: File | null;
   }>({
     brieferTemplate: null,
     availableForDL: null,
     programme: null
   });
+  const [conflictingEvents, setConflictingEvents] = useState<any[]>([]);
   
   // Dynamic data from database
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -256,10 +259,17 @@ const RequestEventPage: React.FC = () => {
     }));
   };
 
-  const handleDepartmentToggle = (departmentName: string) => {
+  const handleDepartmentToggle = async (departmentName: string) => {
     // If department is being selected, open requirements modal
     if (!formData.taggedDepartments.includes(departmentName)) {
       setSelectedDepartment(departmentName);
+      
+      // Fetch conflicting events if date and time are set
+      if (formData.startDate && formData.startTime && formData.endTime) {
+        console.log('🔍 Checking conflicts for:', formData.startDate, formData.startTime, '-', formData.endTime);
+        await fetchConflictingEvents(formData.startDate, formData.startTime, formData.endTime);
+      }
+      
       setShowRequirementsModal(true);
       
       // Find the department and use its requirements
@@ -318,6 +328,17 @@ const RequestEventPage: React.FC = () => {
     handleInputChange('departmentRequirements', newDeptReqs);
   };
 
+  const handleRequirementQuantity = (requirementId: string, quantity: number) => {
+    const currentReqs = formData.departmentRequirements[selectedDepartment] || [];
+    const updatedReqs = currentReqs.map(req => 
+      req.id === requirementId ? { ...req, quantity } : req
+    );
+    
+    const newDeptReqs = { ...formData.departmentRequirements };
+    newDeptReqs[selectedDepartment] = updatedReqs;
+    handleInputChange('departmentRequirements', newDeptReqs);
+  };
+
   const handleAddCustomRequirement = () => {
     if (customRequirement.trim()) {
       const currentReqs = formData.departmentRequirements[selectedDepartment] || [];
@@ -347,6 +368,21 @@ const RequestEventPage: React.FC = () => {
       return;
     }
 
+    // Check for quantity over-requests
+    const overRequests = selectedReqs.filter(req => 
+      req.type === 'physical' && 
+      req.quantity && 
+      req.totalQuantity && 
+      req.quantity > req.totalQuantity
+    );
+    
+    if (overRequests.length > 0) {
+      const overRequestNames = overRequests.map(req => req.name).join(', ');
+      toast.warning(`Warning: Requested quantities exceed available for: ${overRequestNames}`, {
+        description: 'You can still save, but please consider adjusting quantities.'
+      });
+    }
+
     // Add department to tagged list if not already added
     if (!formData.taggedDepartments.includes(selectedDepartment)) {
       const updatedDepartments = [...formData.taggedDepartments, selectedDepartment];
@@ -355,16 +391,17 @@ const RequestEventPage: React.FC = () => {
     
     // Close modal
     setShowRequirementsModal(false);
-    setSelectedDepartment('');
-    setCustomRequirement('');
-    setShowCustomInput(false);
     
-    // Show success message
     const requirementCount = selectedReqs.length;
-    const notesCount = selectedReqs.filter(req => req.notes && req.notes.trim()).length;
+    const physicalCount = selectedReqs.filter(req => req.type === 'physical' && req.quantity).length;
+    const notesCount = selectedReqs.filter(req => req.type === 'service' && req.notes && req.notes.trim()).length;
+    
+    const details = [];
+    if (physicalCount > 0) details.push(`${physicalCount} with quantities`);
+    if (notesCount > 0) details.push(`${notesCount} with notes`);
     
     toast.success(`Requirements saved for ${selectedDepartment}!`, {
-      description: `${requirementCount} requirement(s) selected${notesCount > 0 ? ` with ${notesCount} note(s)` : ''}.`
+      description: `${requirementCount} requirement(s) selected${details.length > 0 ? ` (${details.join(', ')})` : ''}.`
     });
     console.log(`Requirements saved for ${selectedDepartment}:`, selectedReqs);
   };
@@ -374,6 +411,120 @@ const RequestEventPage: React.FC = () => {
     return formData.taggedDepartments.some(dept => {
       const deptReqs = formData.departmentRequirements[dept];
       return deptReqs && deptReqs.some(req => req.selected);
+    });
+  };
+
+  // Check if any physical requirements exceed available quantity
+  const hasQuantityOverRequests = () => {
+    return formData.taggedDepartments.some(dept => {
+      const deptReqs = formData.departmentRequirements[dept];
+      return deptReqs && deptReqs.some(req => 
+        req.selected && 
+        req.type === 'physical' && 
+        req.quantity && 
+        req.totalQuantity && 
+        req.quantity > req.totalQuantity
+      );
+    });
+  };
+
+  // Check if two time ranges overlap
+  const hasTimeConflict = (start1: string, end1: string, start2: string, end2: string, date1: Date, date2: Date) => {
+    // First check if dates are the same
+    if (date1.toDateString() !== date2.toDateString()) {
+      return false;
+    }
+    
+    // Convert time strings to minutes for easier comparison
+    const timeToMinutes = (time: string) => {
+      const [hours, minutes] = time.split(':').map(Number);
+      return hours * 60 + minutes;
+    };
+    
+    const start1Minutes = timeToMinutes(start1);
+    const end1Minutes = timeToMinutes(end1);
+    const start2Minutes = timeToMinutes(start2);
+    const end2Minutes = timeToMinutes(end2);
+    
+    // Check if time ranges overlap
+    return start1Minutes < end2Minutes && start2Minutes < end1Minutes;
+  };
+
+  // Fetch conflicting events for a specific date and time
+  const fetchConflictingEvents = async (date: Date, startTime: string, endTime: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/events`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch events');
+      }
+      
+      const eventsData = await response.json();
+      const events = eventsData.data || [];
+      
+      // Filter events that conflict with the selected time
+      const conflicts = events.filter((event: any) => {
+        if (!event.startDate || !event.startTime || !event.endDate || !event.endTime) {
+          return false;
+        }
+        
+        const eventStartDate = new Date(event.startDate);
+        
+        // Check if there's a time conflict
+        return hasTimeConflict(
+          startTime, endTime,
+          event.startTime, event.endTime,
+          date, eventStartDate
+        );
+      });
+      
+      setConflictingEvents(conflicts);
+      return conflicts;
+    } catch (error) {
+      console.error('Error fetching conflicting events:', error);
+      setConflictingEvents([]);
+      return [];
+    }
+  };
+
+  // Calculate available quantity after subtracting conflicting bookings
+  const getAvailableQuantity = (requirement: any, departmentName: string) => {
+    let usedQuantity = 0;
+    
+    conflictingEvents.forEach(event => {
+      if (event.taggedDepartments && event.taggedDepartments.includes(departmentName)) {
+        const eventReqs = event.departmentRequirements?.[departmentName];
+        if (Array.isArray(eventReqs)) {
+          const matchingReq = eventReqs.find((req: any) => 
+            req.name === requirement.name && req.selected && req.quantity
+          );
+          if (matchingReq) {
+            usedQuantity += matchingReq.quantity || 0;
+          }
+        }
+      }
+    });
+    
+    return Math.max(0, (requirement.totalQuantity || 0) - usedQuantity);
+  };
+
+  // Check if a specific requirement has conflicts (is actually booked by other events)
+  const hasRequirementConflict = (requirement: any, departmentName: string) => {
+    return conflictingEvents.some(event => {
+      if (event.taggedDepartments && event.taggedDepartments.includes(departmentName)) {
+        const eventReqs = event.departmentRequirements?.[departmentName];
+        if (Array.isArray(eventReqs)) {
+          return eventReqs.some((req: any) => 
+            req.name === requirement.name && req.selected && req.quantity
+          );
+        }
+      }
+      return false;
     });
   };
 
@@ -393,7 +544,8 @@ const RequestEventPage: React.FC = () => {
       formData.contactNumber.length === 11 &&
       formData.contactEmail.includes('@') &&
       formData.taggedDepartments.length > 0 &&
-      hasRequirementsForDepartments()
+      hasRequirementsForDepartments() &&
+      !hasQuantityOverRequests()  // Prevent submission if quantities exceed available
     );
   };
 
@@ -1151,10 +1303,21 @@ const RequestEventPage: React.FC = () => {
               {/* Schedule Card - Display Only */}
               <Card>
                 <CardHeader className="pb-4">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <CalendarIcon className="w-5 h-5 text-blue-600" />
-                    Event Schedule
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <CalendarIcon className="w-5 h-5 text-blue-600" />
+                      Event Schedule
+                    </CardTitle>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowScheduleModal(true)}
+                      className="text-xs flex items-center gap-1"
+                    >
+                      <CalendarIcon className="w-3 h-3" />
+                      Edit Schedule
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Schedule Display */}
@@ -1413,7 +1576,7 @@ const RequestEventPage: React.FC = () => {
             {/* Available Requirements */}
             <div className="space-y-3">
               <h4 className="text-sm font-medium text-foreground">Available Requirements</h4>
-              <div className="space-y-3 max-h-64 overflow-y-auto">
+              <div className="space-y-3 max-h-96 overflow-y-auto">
                 {formData.departmentRequirements[selectedDepartment]?.map((requirement) => (
                   <div
                     key={requirement.id}
@@ -1437,16 +1600,47 @@ const RequestEventPage: React.FC = () => {
                             variant={requirement.type === 'physical' ? 'secondary' : 'outline'}
                             className="text-xs"
                           >
-                            {requirement.type === 'physical' ? '📦 Physical' : '🔧 Service'}
+                            <div className="flex items-center gap-1">
+                              {requirement.type === 'physical' ? (
+                                <><Package className="w-3 h-3" /> Physical</>
+                              ) : (
+                                <><Settings className="w-3 h-3" /> Service</>
+                              )}
+                            </div>
                           </Badge>
                         </div>
+                        
+                        {/* Conflict Warning - Only show if THIS requirement has conflicts */}
+                        {conflictingEvents.length > 0 && formData.startDate && formData.startTime && 
+                         hasRequirementConflict(requirement, selectedDepartment) && (
+                          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-3">
+                            <div className="flex items-center gap-2 text-orange-800 text-xs font-medium mb-1">
+                              <AlertTriangle className="w-4 h-4" />
+                              This Item is Already Booked
+                            </div>
+                            <div className="text-xs text-orange-700">
+                              {requirement.name} is requested by {conflictingEvents.length} overlapping event(s) on {formData.startDate.toDateString()}
+                            </div>
+                            <div className="text-xs text-orange-600 mt-1">
+                              Quantity shown is remaining after existing bookings
+                            </div>
+                          </div>
+                        )}
                         
                         <div className="grid grid-cols-2 gap-3 text-xs text-gray-600">
                           <div className="flex items-center gap-1">
                             <span className="font-medium">Available Quantity:</span>
-                            <span className={requirement.totalQuantity ? 'text-gray-900' : 'text-gray-400'}>
-                              {requirement.totalQuantity || 'N/A'}
-                            </span>
+                            {conflictingEvents.length > 0 && formData.startDate && formData.startTime && 
+                             hasRequirementConflict(requirement, selectedDepartment) ? (
+                              <span className="text-blue-600 font-medium">
+                                {getAvailableQuantity(requirement, selectedDepartment)}
+                                <span className="text-gray-500 ml-1">(of {requirement.totalQuantity || 0})</span>
+                              </span>
+                            ) : (
+                              <span className={requirement.totalQuantity ? 'text-gray-900' : 'text-gray-400'}>
+                                {requirement.totalQuantity || 'N/A'}
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center gap-1">
                             <span className="font-medium">Status:</span>
@@ -1521,26 +1715,116 @@ const RequestEventPage: React.FC = () => {
                   ?.filter(req => req.selected)
                   .map((requirement) => (
                   <div key={requirement.id} className="flex items-center gap-1 bg-gray-100 rounded-full px-3 py-1">
-                    <span className="text-sm text-gray-700">{requirement.name}</span>
+                    <span className="text-sm text-gray-700">
+                      {requirement.name}
+                      {requirement.type === 'physical' && requirement.quantity && (
+                        <span className={`font-medium ml-1 ${
+                          requirement.totalQuantity && requirement.quantity > requirement.totalQuantity
+                            ? 'text-red-600'
+                            : 'text-blue-600'
+                        }`}>
+                          ({requirement.quantity}
+                          {requirement.totalQuantity && requirement.quantity > requirement.totalQuantity && (
+                            <span className="text-xs"> ⚠️</span>
+                          )})
+                        </span>
+                      )}
+                    </span>
                     <Popover>
                       <PopoverTrigger asChild>
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-5 w-5 p-0 text-gray-500 hover:text-blue-600"
+                          className={`h-5 w-5 p-0 hover:text-blue-600 ${
+                            (requirement.type === 'physical' && requirement.quantity) || 
+                            (requirement.type === 'service' && requirement.notes?.trim())
+                              ? 'text-blue-600 bg-blue-50' 
+                              : 'text-gray-500'
+                          }`}
+                          title={
+                            requirement.type === 'physical' 
+                              ? (requirement.quantity ? `Quantity: ${requirement.quantity}` : 'Set Quantity')
+                              : (requirement.notes?.trim() ? 'Edit Notes' : 'Add Notes')
+                          }
                         >
-                          <StickyNote className="w-3 h-3" />
+                          {requirement.type === 'physical' ? (
+                            <span className="text-xs font-bold">#</span>
+                          ) : (
+                            <StickyNote className="w-3 h-3" />
+                          )}
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-80">
                         <div className="space-y-2">
-                          <h4 className="font-medium text-sm">Notes for {requirement.name}</h4>
-                          <Textarea
-                            placeholder="Add specific notes or requirements..."
-                            value={requirement.notes}
-                            onChange={(e) => handleRequirementNotes(requirement.id, e.target.value)}
-                            className="min-h-20 text-sm"
-                          />
+                          {requirement.type === 'physical' ? (
+                            <>
+                              <h4 className="font-medium text-sm">Quantity for {requirement.name}</h4>
+                              <Input
+                                type="number"
+                                placeholder="Enter quantity needed..."
+                                value={requirement.quantity || ''}
+                                onChange={(e) => handleRequirementQuantity(requirement.id, parseInt(e.target.value) || 0)}
+                                className={`text-sm ${
+                                  requirement.quantity && (
+                                    (conflictingEvents.length > 0 && formData.startDate && formData.startTime && 
+                                     hasRequirementConflict(requirement, selectedDepartment) &&
+                                     requirement.quantity > getAvailableQuantity(requirement, selectedDepartment)) ||
+                                    ((!conflictingEvents.length || !formData.startDate || !formData.startTime || 
+                                      !hasRequirementConflict(requirement, selectedDepartment)) && 
+                                     requirement.quantity > (requirement.totalQuantity || 0))
+                                  ) ? 'border-red-300 focus:border-red-500 focus:ring-red-200' : ''
+                                }`}
+                                min="1"
+                                max={
+                                  conflictingEvents.length > 0 && formData.startDate && formData.startTime && 
+                                  hasRequirementConflict(requirement, selectedDepartment)
+                                    ? getAvailableQuantity(requirement, selectedDepartment)
+                                    : (requirement.totalQuantity || undefined)
+                                }
+                              />
+                              {requirement.quantity && (
+                                (conflictingEvents.length > 0 && formData.startDate && formData.startTime && 
+                                 hasRequirementConflict(requirement, selectedDepartment) &&
+                                 requirement.quantity > getAvailableQuantity(requirement, selectedDepartment)) ||
+                                ((!conflictingEvents.length || !formData.startDate || !formData.startTime || 
+                                  !hasRequirementConflict(requirement, selectedDepartment)) && 
+                                 requirement.quantity > (requirement.totalQuantity || 0))
+                              ) ? (
+                                <div className="flex items-center gap-1 text-xs text-red-600 bg-red-50 p-2 rounded">
+                                  <AlertTriangle className="w-3 h-3" />
+                                  <span className="font-medium">Warning:</span>
+                                  <span>
+                                    Requested {requirement.quantity} but only {' '}
+                                    {conflictingEvents.length > 0 && formData.startDate && formData.startTime
+                                      ? getAvailableQuantity(requirement, selectedDepartment)
+                                      : requirement.totalQuantity
+                                    } available
+                                    {conflictingEvents.length > 0 && formData.startDate && formData.startTime && ' (after conflicts)'}
+                                  </span>
+                                </div>
+                              ) : (
+                                <p className="text-xs text-gray-500">
+                                  Enter the number of {requirement.name.toLowerCase()} you need
+                                  {' (Available: '}
+                                  {conflictingEvents.length > 0 && formData.startDate && formData.startTime && 
+                                   hasRequirementConflict(requirement, selectedDepartment)
+                                    ? `${getAvailableQuantity(requirement, selectedDepartment)} after conflicts`
+                                    : (requirement.totalQuantity || 'N/A')
+                                  })
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <h4 className="font-medium text-sm">Notes for {requirement.name}</h4>
+                              <Textarea
+                                placeholder="Add specific notes or requirements..."
+                                value={requirement.notes}
+                                onChange={(e) => handleRequirementNotes(requirement.id, e.target.value)}
+                                className="min-h-20 text-sm"
+                              />
+                            </>
+                          )}
                         </div>
                       </PopoverContent>
                     </Popover>

@@ -88,7 +88,7 @@ const MyCalendarPage: React.FC = () => {
       console.log('Attempting to fetch requirements for department:', departmentName);
       
       // Try API call first
-      const departmentsResponse = await fetch('/api/departments/visible');
+      const departmentsResponse = await fetch('http://localhost:5000/api/departments/visible');
       if (!departmentsResponse.ok) {
         throw new Error(`API returned ${departmentsResponse.status}: ${departmentsResponse.statusText}`);
       }
@@ -144,9 +144,9 @@ const MyCalendarPage: React.FC = () => {
   const fetchAvailabilityData = async (departmentId: string) => {
     try {
       // Fetch actual availability data from API
-      const response = await fetch(`/api/resource-availability/department/${departmentId}/availability`, {
+      const response = await fetch(`http://localhost:5000/api/resource-availability/department/${departmentId}/availability`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
           'Content-Type': 'application/json'
         }
       });
@@ -210,8 +210,14 @@ const MyCalendarPage: React.FC = () => {
     try {
       const dateString = format(date, 'yyyy-MM-dd');
       
+      // Debug: Check token
+      const token = localStorage.getItem('authToken');
+      console.log('🔍 Token exists:', !!token);
+      console.log('🔍 Token preview:', token?.substring(0, 20) + '...');
+      console.log('🔍 Current user:', currentUser);
+      
       // Get department info
-      const departmentsResponse = await fetch('/api/departments/visible');
+      const departmentsResponse = await fetch('http://localhost:5000/api/departments/visible');
       if (!departmentsResponse.ok) {
         throw new Error(`Failed to fetch departments: ${departmentsResponse.statusText}`);
       }
@@ -224,10 +230,10 @@ const MyCalendarPage: React.FC = () => {
       }
 
       // Make actual API call to save availability
-      const response = await fetch('/api/resource-availability/availability/bulk', {
+      const response = await fetch('http://localhost:5000/api/resource-availability/availability/bulk', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -246,6 +252,8 @@ const MyCalendarPage: React.FC = () => {
       });
 
       if (!response.ok) {
+        const errorData = await response.text();
+        console.log('🚨 Backend error response:', errorData);
         throw new Error(`Failed to save availability: ${response.statusText}`);
       }
 
