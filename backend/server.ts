@@ -23,7 +23,7 @@ console.log('📋 Environment variables loaded:', Object.keys(process.env).filte
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://devuser:flVvICG71ImzyW4f@bunker-cluster.k6ufbjj.mongodb.net/bunker?retryWrites=true&w=majority';
+const MONGODB_URI = process.env.MONGODB_URI;
 
 // Middleware
 app.use(cors());

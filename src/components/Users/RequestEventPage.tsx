@@ -56,6 +56,10 @@ interface DepartmentRequirement {
   name: string;
   selected: boolean;
   notes: string;
+  type?: 'physical' | 'service';
+  totalQuantity?: number;
+  isAvailable?: boolean;
+  responsiblePerson?: string;
 }
 
 interface DepartmentRequirements {
@@ -91,7 +95,13 @@ interface Department {
   requirements: Array<{
     _id: string;
     text: string;
+    type: 'physical' | 'service';
+    totalQuantity?: number;
+    isActive: boolean;
+    isAvailable?: boolean;
+    responsiblePerson?: string;
     createdAt: string;
+    updatedAt?: string;
   }>;
 }
 
@@ -260,7 +270,11 @@ const RequestEventPage: React.FC = () => {
           id: req._id,
           name: req.text,
           selected: false,
-          notes: ''
+          notes: '',
+          type: req.type,
+          totalQuantity: req.totalQuantity,
+          isAvailable: req.isAvailable,
+          responsiblePerson: req.responsiblePerson
         }));
 
         // Initialize requirements for this department
@@ -1039,28 +1053,53 @@ const RequestEventPage: React.FC = () => {
                               </div>
                               
                               {deptRequirements.length > 0 && (
-                                <div className="space-y-1">
+                                <div className="space-y-2">
                                   <div className="text-xs text-blue-600 flex items-center gap-1">
                                     <FileText className="w-2.5 h-2.5" />
                                     {deptRequirements.length} requirement(s)
                                     {notesCount > 0 && ` • ${notesCount} with notes`}
                                   </div>
-                                  <div className="flex flex-wrap gap-1">
-                                    {deptRequirements.slice(0, 2).map((req) => (
-                                      <span 
+                                  <div className="space-y-1">
+                                    {deptRequirements.slice(0, 3).map((req) => (
+                                      <div 
                                         key={req.id} 
-                                        className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded"
+                                        className="text-xs bg-blue-100 text-blue-700 p-2 rounded border border-blue-200"
                                       >
-                                        {req.name}
-                                        {req.notes && req.notes.trim() && (
-                                          <StickyNote className="w-2 h-2 ml-1 inline" />
+                                        <div className="flex items-center justify-between mb-1">
+                                          <span className="font-medium">{req.name}</span>
+                                          <div className="flex items-center gap-1">
+                                            {req.type && (
+                                              <span className="text-xs bg-blue-200 px-1 py-0.5 rounded">
+                                                {req.type === 'physical' ? '📦' : '🔧'}
+                                              </span>
+                                            )}
+                                            {req.notes && req.notes.trim() && (
+                                              <StickyNote className="w-2 h-2" />
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center justify-between text-xs">
+                                          <span>Available: {req.totalQuantity || 'N/A'}</span>
+                                          <span className={`flex items-center gap-1 ${
+                                            req.isAvailable ? 'text-green-700' : 'text-red-700'
+                                          }`}>
+                                            <div className={`w-1.5 h-1.5 rounded-full ${
+                                              req.isAvailable ? 'bg-green-500' : 'bg-red-500'
+                                            }`}></div>
+                                            {req.isAvailable ? 'Available' : 'Unavailable'}
+                                          </span>
+                                        </div>
+                                        {req.responsiblePerson && (
+                                          <div className="text-xs text-blue-600 mt-1">
+                                            Contact: {req.responsiblePerson}
+                                          </div>
                                         )}
-                                      </span>
+                                      </div>
                                     ))}
-                                    {deptRequirements.length > 2 && (
-                                      <span className="text-xs text-blue-500">
-                                        +{deptRequirements.length - 2} more
-                                      </span>
+                                    {deptRequirements.length > 3 && (
+                                      <div className="text-xs text-blue-500 text-center py-1">
+                                        +{deptRequirements.length - 3} more requirements
+                                      </div>
                                     )}
                                   </div>
                                 </div>
@@ -1300,7 +1339,7 @@ const RequestEventPage: React.FC = () => {
         >
           <Button 
             variant="outline" 
-            onClick={() => setCurrentStep(2)}
+            onClick={() => setCurrentStep(1)}
           >
             Previous
           </Button>
@@ -1374,32 +1413,78 @@ const RequestEventPage: React.FC = () => {
             {/* Available Requirements */}
             <div className="space-y-3">
               <h4 className="text-sm font-medium text-foreground">Available Requirements</h4>
-              <div className="flex flex-wrap gap-2">
+              <div className="space-y-3 max-h-64 overflow-y-auto">
                 {formData.departmentRequirements[selectedDepartment]?.map((requirement) => (
-                  <Button
+                  <div
                     key={requirement.id}
-                    onClick={() => handleRequirementToggle(requirement.id)}
-                    variant={requirement.selected ? "default" : "outline"}
-                    size="sm"
-                    className={`text-xs h-7 ${
+                    className={`p-3 border rounded-lg cursor-pointer transition-all ${
                       requirement.selected 
-                        ? 'bg-primary hover:bg-primary/90 text-primary-foreground' 
-                        : 'border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                        ? 'bg-blue-50 border-blue-200 shadow-sm' 
+                        : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                     }`}
+                    onClick={() => handleRequirementToggle(requirement.id)}
                   >
-                    {requirement.name}
-                  </Button>
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Checkbox
+                            checked={requirement.selected}
+                            onChange={() => handleRequirementToggle(requirement.id)}
+                            className="mt-0.5"
+                          />
+                          <h5 className="font-medium text-sm text-gray-900">{requirement.name}</h5>
+                          <Badge 
+                            variant={requirement.type === 'physical' ? 'secondary' : 'outline'}
+                            className="text-xs"
+                          >
+                            {requirement.type === 'physical' ? '📦 Physical' : '🔧 Service'}
+                          </Badge>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-3 text-xs text-gray-600">
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">Available Quantity:</span>
+                            <span className={requirement.totalQuantity ? 'text-gray-900' : 'text-gray-400'}>
+                              {requirement.totalQuantity || 'N/A'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">Status:</span>
+                            <span className={`flex items-center gap-1 ${
+                              requirement.isAvailable ? 'text-green-600' : 'text-red-600'
+                            }`}>
+                              <div className={`w-2 h-2 rounded-full ${
+                                requirement.isAvailable ? 'bg-green-500' : 'bg-red-500'
+                              }`}></div>
+                              {requirement.isAvailable ? 'Available' : 'Unavailable'}
+                            </span>
+                          </div>
+                        </div>
+                        
+                        {requirement.responsiblePerson && (
+                          <div className="mt-2 text-xs text-gray-600">
+                            <span className="font-medium">Contact:</span> {requirement.responsiblePerson}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 ))}
-                <Button
-                  onClick={() => setShowCustomInput(!showCustomInput)}
-                  variant="outline"
-                  size="sm"
-                  className={`text-xs h-7 border-dashed border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground ${
-                    showCustomInput ? 'bg-accent text-accent-foreground' : ''
+                
+                {/* Add Custom Requirement Button */}
+                <div 
+                  className={`p-3 border-2 border-dashed rounded-lg cursor-pointer transition-all ${
+                    showCustomInput 
+                      ? 'bg-blue-50 border-blue-300' 
+                      : 'border-gray-300 hover:border-blue-300 hover:bg-blue-50'
                   }`}
+                  onClick={() => setShowCustomInput(!showCustomInput)}
                 >
-                  + Add Custom
-                </Button>
+                  <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
+                    <Plus className="w-4 h-4" />
+                    Add Custom Requirement
+                  </div>
+                </div>
               </div>
             </div>
           </div>
