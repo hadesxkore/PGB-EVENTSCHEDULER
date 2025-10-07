@@ -316,6 +316,61 @@ const MyEventsPage: React.FC = () => {
     return `${displayHour}:${minutes} ${ampm}`;
   };
 
+  // Format MIME type helper - truncate long MIME types
+  const formatMimeType = (mimetype: string) => {
+    if (!mimetype) return '';
+    
+    // Common MIME type mappings for better display
+    const mimeTypeMap: { [key: string]: string } = {
+      'application/pdf': 'PDF',
+      'application/msword': 'DOC',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
+      'application/vnd.ms-excel': 'XLS',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'XLSX',
+      'application/vnd.ms-powerpoint': 'PPT',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PPTX',
+      'image/jpeg': 'JPEG',
+      'image/jpg': 'JPG',
+      'image/png': 'PNG',
+      'image/gif': 'GIF',
+      'text/plain': 'TXT',
+      'text/csv': 'CSV'
+    };
+
+    // Return mapped type if available
+    if (mimeTypeMap[mimetype]) {
+      return mimeTypeMap[mimetype];
+    }
+
+    // If MIME type is longer than 25 characters, truncate with ellipsis
+    if (mimetype.length > 25) {
+      return mimetype.substring(0, 22) + '...';
+    }
+
+    return mimetype;
+  };
+
+  // Format file name helper - truncate long file names
+  const formatFileName = (fileName: string, maxLength: number = 20) => {
+    if (!fileName) return '';
+    
+    // If file name is longer than maxLength, truncate with ellipsis
+    if (fileName.length > maxLength) {
+      // Try to preserve file extension
+      const lastDotIndex = fileName.lastIndexOf('.');
+      if (lastDotIndex > 0 && lastDotIndex > fileName.length - 10) {
+        const extension = fileName.substring(lastDotIndex);
+        const nameWithoutExt = fileName.substring(0, lastDotIndex);
+        const truncatedName = nameWithoutExt.substring(0, maxLength - extension.length - 3);
+        return truncatedName + '...' + extension;
+      } else {
+        return fileName.substring(0, maxLength - 3) + '...';
+      }
+    }
+
+    return fileName;
+  };
+
   // View event details
   const handleViewEvent = (event: Event) => {
     setSelectedEvent(event);
@@ -1085,9 +1140,9 @@ const MyEventsPage: React.FC = () => {
                             <FileText className="w-5 h-5 text-blue-600" />
                           </div>
                           <div>
-                            <p className="text-sm font-medium text-gray-900">{attachment.originalName}</p>
+                            <p className="text-sm font-medium text-gray-900" title={attachment.originalName}>{formatFileName(attachment.originalName)}</p>
                             <p className="text-xs text-gray-500">
-                              {attachment.mimetype} • {(attachment.size / 1024).toFixed(1)} KB
+                              {formatMimeType(attachment.mimetype)} • {(attachment.size / 1024).toFixed(1)} KB
                             </p>
                           </div>
                         </div>
@@ -1141,9 +1196,9 @@ const MyEventsPage: React.FC = () => {
                             <FileText className="w-5 h-5 text-green-600" />
                           </div>
                           <div>
-                            <p className="text-sm font-medium text-gray-900">{selectedEventFiles.govFiles.brieferTemplate.originalName}</p>
+                            <p className="text-sm font-medium text-gray-900" title={selectedEventFiles.govFiles.brieferTemplate.originalName}>{formatFileName(selectedEventFiles.govFiles.brieferTemplate.originalName)}</p>
                             <p className="text-xs text-gray-500">
-                              {selectedEventFiles.govFiles.brieferTemplate.mimetype} • {(selectedEventFiles.govFiles.brieferTemplate.size / 1024).toFixed(1)} KB
+                              {formatMimeType(selectedEventFiles.govFiles.brieferTemplate.mimetype)} • {(selectedEventFiles.govFiles.brieferTemplate.size / 1024).toFixed(1)} KB
                             </p>
                             <p className="text-xs text-green-600 font-medium">Briefer Template</p>
                           </div>
@@ -1226,9 +1281,9 @@ const MyEventsPage: React.FC = () => {
                             <FileText className="w-5 h-5 text-green-600" />
                           </div>
                           <div>
-                            <p className="text-sm font-medium text-gray-900">{selectedEventFiles.govFiles.availableForDL.originalName}</p>
+                            <p className="text-sm font-medium text-gray-900" title={selectedEventFiles.govFiles.availableForDL.originalName}>{formatFileName(selectedEventFiles.govFiles.availableForDL.originalName)}</p>
                             <p className="text-xs text-gray-500">
-                              {selectedEventFiles.govFiles.availableForDL.mimetype} • {(selectedEventFiles.govFiles.availableForDL.size / 1024).toFixed(1)} KB
+                              {formatMimeType(selectedEventFiles.govFiles.availableForDL.mimetype)} • {(selectedEventFiles.govFiles.availableForDL.size / 1024).toFixed(1)} KB
                             </p>
                             <p className="text-xs text-green-600 font-medium">Available for DL</p>
                           </div>
@@ -1268,9 +1323,9 @@ const MyEventsPage: React.FC = () => {
                             <FileText className="w-5 h-5 text-green-600" />
                           </div>
                           <div>
-                            <p className="text-sm font-medium text-gray-900">{selectedEventFiles.govFiles.programme.originalName}</p>
+                            <p className="text-sm font-medium text-gray-900" title={selectedEventFiles.govFiles.programme.originalName}>{formatFileName(selectedEventFiles.govFiles.programme.originalName)}</p>
                             <p className="text-xs text-gray-500">
-                              {selectedEventFiles.govFiles.programme.mimetype} • {(selectedEventFiles.govFiles.programme.size / 1024).toFixed(1)} KB
+                              {formatMimeType(selectedEventFiles.govFiles.programme.mimetype)} • {(selectedEventFiles.govFiles.programme.size / 1024).toFixed(1)} KB
                             </p>
                             <p className="text-xs text-green-600 font-medium">Programme</p>
                           </div>

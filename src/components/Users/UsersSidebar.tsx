@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import axios from 'axios';
 import { 
   LayoutDashboard, 
   CalendarPlus, 
@@ -10,7 +11,8 @@ import {
   Building2,
   Package,
   PanelLeft,
-  LogOut
+  LogOut,
+  MapPin
 } from 'lucide-react';
 
 interface UsersSidebarProps {
@@ -23,26 +25,83 @@ interface UsersSidebarProps {
 }
 
 const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
-  // Use actual user data or fallback
-  const currentUser = user || {
-    name: "User",
-    email: "user@bataan.gov.ph",
-    department: "Department"
+  // Use actual user data or fallback with proper null checks
+  const currentUser = {
+    name: user?.name || "User",
+    email: user?.email || "user@bataan.gov.ph",
+    department: user?.department || "Department"
   };
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [permissions, setPermissions] = useState({
+    myRequirements: false,
+    manageLocation: false
+  });
   const navigate = useNavigate();
   const location = useLocation();
+
+  // API Configuration
+  const API_BASE_URL = 'http://localhost:5000/api';
+  const getAuthHeaders = () => {
+    const token = localStorage.getItem('authToken');
+    return {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    };
+  };
+
+  // Fetch department permissions
+  useEffect(() => {
+    const fetchPermissions = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/department-permissions/${currentUser.department}`, {
+          headers: getAuthHeaders()
+        });
+        
+        if (response.data.success) {
+          setPermissions(response.data.data.permissions);
+        }
+      } catch (error) {
+        console.error('Error fetching department permissions:', error);
+        // Keep default permissions if fetch fails
+      }
+    };
+
+    if (currentUser.department && currentUser.department !== "Department") {
+      fetchPermissions();
+    }
+  }, [currentUser.department]);
   
-  const navigationItems = [
-    { icon: LayoutDashboard, label: 'Dashboard', href: '/users/dashboard' },
-    { icon: CalendarPlus, label: 'Request Event', href: '/users/request-event' },
-    { icon: Calendar, label: 'My Events', href: '/users/my-events' },
-    { icon: CalendarDays, label: 'My Calendar', href: '/users/my-calendar' },
-    { icon: Package, label: 'My Requirements', href: '/users/my-requirements' },
-    { icon: Calendar, label: 'All Events', href: '/users/all-events' },
-    { icon: MessageSquare, label: 'Messages', href: '/users/messages' },
-    { icon: Building2, label: 'Tagged Departments', href: '/users/tagged-departments' },
-  ];
+  // Dynamic navigation items based on permissions
+  const getNavigationItems = () => {
+    const baseItems = [
+      { icon: LayoutDashboard, label: 'Dashboard', href: '/users/dashboard' },
+      { icon: CalendarPlus, label: 'Request Event', href: '/users/request-event' },
+      { icon: Calendar, label: 'My Events', href: '/users/my-events' },
+      { icon: CalendarDays, label: 'My Calendar', href: '/users/my-calendar' },
+    ];
+
+    const conditionalItems = [];
+    
+    // Add My Requirements if permitted
+    if (permissions.myRequirements) {
+      conditionalItems.push({ icon: Package, label: 'My Requirements', href: '/users/my-requirements' });
+    }
+    
+    // Add Manage Location if permitted
+    if (permissions.manageLocation) {
+      conditionalItems.push({ icon: MapPin, label: 'Manage Location', href: '/users/manage-location' });
+    }
+
+    const endItems = [
+      { icon: Calendar, label: 'All Events', href: '/users/all-events' },
+      { icon: MessageSquare, label: 'Messages', href: '/users/messages' },
+      { icon: Building2, label: 'Tagged Departments', href: '/users/tagged-departments' },
+    ];
+
+    return [...baseItems, ...conditionalItems, ...endItems];
+  };
+
+  const navigationItems = getNavigationItems();
 
   const handleNavigation = (href: string) => {
     navigate(href);
@@ -125,7 +184,7 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
             <span className="text-sm font-bold text-white">
-              {currentUser.department.charAt(0).toUpperCase()}
+              {currentUser.department?.charAt(0)?.toUpperCase() || 'D'}
             </span>
           </div>
           <div className={`flex-1 min-w-0 transition-opacity duration-200 ${

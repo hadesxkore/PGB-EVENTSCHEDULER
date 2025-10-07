@@ -9,13 +9,13 @@ import {
   CheckCircle,
   XCircle
 } from 'lucide-react';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, isBefore, startOfDay } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, isBefore, startOfDay, startOfWeek, endOfWeek } from 'date-fns';
 
 export interface CalendarEvent {
   id: string;
   date: string;
   title: string;
-  type: 'available' | 'unavailable' | 'event' | 'custom';
+  type: 'available' | 'unavailable' | 'event' | 'custom' | 'booking';
   notes?: string;
   color?: string;
   className?: string;
@@ -48,10 +48,12 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
 }) => {
   const [currentDate, setCurrentDate] = useState(initialDate);
 
-  // Get calendar days for current month
+  // Get calendar days for current month with proper week padding
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(currentDate);
-  const calendarDays = eachDayOfInterval({ start: monthStart, end: monthEnd });
+  const calendarStart = startOfWeek(monthStart);
+  const calendarEnd = endOfWeek(monthEnd);
+  const calendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
 
   // Get events for a specific date
   const getEventsForDate = (date: Date): CalendarEvent[] => {
@@ -98,6 +100,8 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
           return 'bg-red-100 text-red-800 border-red-200';
         case 'event':
           return 'bg-blue-100 text-blue-800 border-blue-200';
+        case 'booking':
+          return 'bg-purple-100 text-purple-800 border-purple-200';
         default:
           return 'bg-gray-100 text-gray-800 border-gray-200';
       }
@@ -109,9 +113,17 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
           return <CheckCircle className="w-2 h-2" />;
         case 'unavailable':
           return <XCircle className="w-2 h-2" />;
+        case 'booking':
+          return <Plus className="w-2 h-2" />;
         default:
           return null;
       }
+    };
+
+    // Truncate long event titles to prevent overflow
+    const truncateTitle = (title: string, maxLength: number = 20) => {
+      if (title.length <= maxLength) return title;
+      return title.substring(0, maxLength - 3) + '...';
     };
 
     return (
@@ -120,9 +132,10 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
         variant="outline"
         className={`text-xs gap-1 mb-1 ${getEventStyle(event.type, event.color)} ${event.className || ''}`}
         style={event.color ? { backgroundColor: event.color } : undefined}
+        title={event.title} // Show full title on hover
       >
         {getEventIcon(event.type)}
-        {event.title}
+        <span className="truncate">{truncateTitle(event.title)}</span>
       </Badge>
     );
   };
@@ -261,6 +274,10 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-red-100 border border-red-200 rounded"></div>
             <span>Unavailable</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-purple-100 border border-purple-200 rounded"></div>
+            <span>Has Bookings</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-blue-100 border border-blue-200 rounded"></div>

@@ -4,20 +4,28 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Label } from '@/components/ui/label';
 import { 
-  Calendar as CalendarIcon,
+  Building2,
+  Package,
+  Users,
+  Eye,
+  X,
   CheckCircle,
   XCircle,
+  AlertCircle,
+  Calendar as CalendarIcon,
+  MapPin,
+  User,
+  Star,
+  Clock,
   Edit3,
-  Save,
-  X,
-  Package,
   Settings,
-  AlertCircle
+  Save
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -42,6 +50,32 @@ interface RequirementAvailability {
   maxCapacity: number;
 }
 
+interface DepartmentBooking {
+  departmentName: string;
+  eventTitle: string;
+  requestor: string;
+  quantity: number;
+  notes?: string;
+  eventId: string;
+  startTime?: string;
+  endTime?: string;
+}
+
+interface EventDetails {
+  _id: string;
+  eventTitle: string;
+  requestor: string;
+  location: string;
+  startDate: string;
+  startTime: string;
+  endDate: string;
+  endTime: string;
+  participants: number;
+  vip?: number;
+  vvip?: number;
+  taggedDepartments: string[];
+}
+
 interface RequirementAvailabilityModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -51,6 +85,8 @@ interface RequirementAvailabilityModalProps {
   requirements: Requirement[];
   onSave: (date: Date, availabilities: RequirementAvailability[]) => void;
   existingAvailabilities?: RequirementAvailability[];
+  currentStartTime?: string;
+  currentEndTime?: string;
 }
 
 const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> = ({
@@ -60,12 +96,20 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
   departmentName,
   requirements,
   onSave,
-  existingAvailabilities = []
+  existingAvailabilities = [],
+  currentStartTime,
+  currentEndTime
 }) => {
   const [availabilities, setAvailabilities] = useState<RequirementAvailability[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [selectedRequirements, setSelectedRequirements] = useState<string[]>([]);
   const [showSelection, setShowSelection] = useState(true);
+  const [activeTab, setActiveTab] = useState('availability');
+  const [departmentBookings, setDepartmentBookings] = useState<{ [requirementId: string]: DepartmentBooking[] }>({});
+  const [loadingBookings, setLoadingBookings] = useState(false);
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [selectedEventDetails, setSelectedEventDetails] = useState<EventDetails | null>(null);
+  const [loadingEventDetails, setLoadingEventDetails] = useState(false);
 
   // Initialize states when modal opens
   useEffect(() => {
@@ -92,6 +136,9 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
         };
       });
       setAvailabilities(initialAvailabilities);
+      
+      // Fetch real booking data from API
+      fetchDepartmentBookings();
     }
   }, [isOpen, requirements, existingAvailabilities]);
 
@@ -129,6 +176,167 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
     );
   };
 
+  // Fetch department bookings for the selected date
+  const fetchDepartmentBookings = async () => {
+    if (!selectedDate) return;
+
+    setLoadingBookings(true);
+    try {
+      const token = localStorage.getItem('authToken');
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      };
+
+      // Fetch all events and filter client-side for date range matching
+      const response = await fetch(`http://localhost:5000/api/events`, {
+        headers
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch events');
+      }
+
+      const eventsData = await response.json();
+      const events = eventsData.data || [];
+
+      // Process events to extract department bookings by requirement
+      const bookingsByRequirement: { [requirementId: string]: DepartmentBooking[] } = {};
+
+      events.forEach((event: any) => {
+        // Check if the event actually occurs on the selected date
+        const eventStartDate = new Date(event.startDate);
+        const eventEndDate = new Date(event.endDate);
+        const selectedDateOnly = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+        
+        // Check if the selected date falls within the event's date range
+        const eventStartDateOnly = new Date(eventStartDate.getFullYear(), eventStartDate.getMonth(), eventStartDate.getDate());
+        const eventEndDateOnly = new Date(eventEndDate.getFullYear(), eventEndDate.getMonth(), eventEndDate.getDate());
+        
+        const isEventOnSelectedDate = selectedDateOnly >= eventStartDateOnly && selectedDateOnly <= eventEndDateOnly;
+        
+        // Additional time overlap check - only include events that have time overlap with current time range
+        let hasTimeOverlap = true; // Default to true for date-only events
+        
+        if (currentStartTime && currentEndTime && event.startTime && event.endTime) {
+          // Convert times to minutes for easier comparison
+          const parseTime = (timeStr: string) => {
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            return hours * 60 + minutes;
+          };
+          
+          const currentStart = parseTime(currentStartTime);
+          const currentEnd = parseTime(currentEndTime);
+          const eventStart = parseTime(event.startTime);
+          const eventEnd = parseTime(event.endTime);
+          
+          // Check if time ranges overlap: (start1 < end2) && (start2 < end1)
+          hasTimeOverlap = (currentStart < eventEnd) && (eventStart < currentEnd);
+          
+          console.log(`⏰ Time overlap check for event "${event.eventTitle}":`, {
+            currentTime: `${currentStartTime}-${currentEndTime}`,
+            eventTime: `${event.startTime}-${event.endTime}`,
+            hasOverlap: hasTimeOverlap
+          });
+        }
+        
+        if (isEventOnSelectedDate && hasTimeOverlap && event.departmentRequirements && event.taggedDepartments) {
+          // Get the department that created this event (not the tagged departments)
+          const eventOwnerDepartment = event.requestorDepartment || event.departmentName || event.department || event.createdByDepartment || 'Unknown Department';
+          
+          // Loop through each department's requirements
+          event.taggedDepartments.forEach((deptName: string) => {
+            const deptRequirements = event.departmentRequirements[deptName];
+            if (Array.isArray(deptRequirements)) {
+              deptRequirements.forEach((req: any) => {
+                if (req.selected) {
+                  // Find matching requirement ID from our current department's requirements
+                  const matchingReq = requirements.find(r => r.text === req.name);
+                  if (matchingReq) {
+                    if (!bookingsByRequirement[matchingReq._id]) {
+                      bookingsByRequirement[matchingReq._id] = [];
+                    }
+                    
+                    bookingsByRequirement[matchingReq._id].push({
+                      departmentName: eventOwnerDepartment, // Use event owner department instead of tagged department
+                      eventTitle: event.eventTitle,
+                      requestor: event.requestor,
+                      quantity: req.quantity || 1,
+                      notes: req.notes || '',
+                      eventId: event._id,
+                      startTime: event.startTime,
+                      endTime: event.endTime
+                    });
+                  }
+                }
+              });
+            }
+          });
+        }
+      });
+
+      setDepartmentBookings(bookingsByRequirement);
+    } catch (error) {
+      console.error('Error fetching department bookings:', error);
+      // Set empty bookings on error
+      setDepartmentBookings({});
+    } finally {
+      setLoadingBookings(false);
+    }
+  };
+
+  // Fetch event details
+  const fetchEventDetails = async (eventId: string) => {
+    setLoadingEventDetails(true);
+    try {
+      const token = localStorage.getItem('authToken');
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      };
+
+      const response = await fetch(`http://localhost:5000/api/events/${eventId}`, {
+        headers
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch event details');
+      }
+
+      const eventData = await response.json();
+      setSelectedEventDetails(eventData.data);
+      setShowEventModal(true);
+    } catch (error) {
+      console.error('Error fetching event details:', error);
+    } finally {
+      setLoadingEventDetails(false);
+    }
+  };
+
+  // Handle view event
+  const handleViewEvent = (eventId: string) => {
+    fetchEventDetails(eventId);
+  };
+
+  // Convert 24-hour time to 12-hour AM/PM format
+  const formatTime12Hour = (time24: string) => {
+    if (!time24) return '';
+    
+    const [hours, minutes] = time24.split(':');
+    const hour = parseInt(hours, 10);
+    const minute = minutes || '00';
+    
+    if (hour === 0) {
+      return `12:${minute} AM`;
+    } else if (hour < 12) {
+      return `${hour}:${minute} AM`;
+    } else if (hour === 12) {
+      return `12:${minute} PM`;
+    } else {
+      return `${hour - 12}:${minute} PM`;
+    }
+  };
+
   // Handle save
   const handleSave = async () => {
     if (!selectedDate || selectedRequirements.length === 0) return;
@@ -155,6 +363,7 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
   if (!selectedDate) return null;
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent 
         className="flex flex-col overflow-hidden"
@@ -221,10 +430,36 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
           </div>
         </div>
 
-        {/* Scrollable Content */}
+        {/* Scrollable Content with Tabs */}
         <div className="flex-1 overflow-hidden">
-          <ScrollArea className="h-full">
-            <div className="p-6">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+            <div className="flex-shrink-0 px-6 pt-4">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="availability" className="gap-2">
+                  <Settings className="w-4 h-4" />
+                  Set Availability
+                </TabsTrigger>
+                <TabsTrigger value="bookings" className="gap-2 relative">
+                  <Building2 className="w-4 h-4" />
+                  Department Bookings
+                  {(() => {
+                    const totalBookings = Object.values(departmentBookings).reduce((total, bookings) => total + bookings.length, 0);
+                    return totalBookings > 0 && (
+                      <Badge 
+                        variant="secondary" 
+                        className="ml-2 h-5 min-w-5 text-xs bg-purple-100 text-purple-800 border-purple-200"
+                      >
+                        {totalBookings}
+                      </Badge>
+                    );
+                  })()}
+                </TabsTrigger>
+              </TabsList>
+            </div>
+            
+            <div className="flex-1 overflow-hidden">
+              <ScrollArea className="h-full">
+                <TabsContent value="availability" className="p-6 mt-0">
               {showSelection ? (
                 /* Requirement Selection Screen */
                 <div className="space-y-6">
@@ -390,14 +625,34 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
                   {/* Quantity Controls (only for physical items and if available) */}
                   {availability.isAvailable && requirements.find(req => req._id === availability.requirementId)?.type === 'physical' && (
                     <div className="mb-4 space-y-3">
-                      {/* Total Quantity Display */}
+                      {/* Total Quantity Display with Conflict Detection */}
                       <div className="p-2 bg-muted/30 rounded-md">
                         <Label className="text-xs font-medium text-muted-foreground">
-                          Total Quantity Available
+                          Available Quantity (After Conflicts)
                         </Label>
-                        <p className="text-sm font-semibold text-foreground">
-                          {requirements.find(req => req._id === availability.requirementId)?.totalQuantity || 1} units
-                        </p>
+                        {(() => {
+                          const requirement = requirements.find(req => req._id === availability.requirementId);
+                          const totalQuantity = requirement?.totalQuantity || 1;
+                          const bookings = departmentBookings[availability.requirementId] || [];
+                          const bookedQuantity = bookings.reduce((sum, booking) => sum + booking.quantity, 0);
+                          const remainingQuantity = Math.max(0, totalQuantity - bookedQuantity);
+                          
+                          return (
+                            <div className="space-y-1">
+                              <p className="text-sm font-semibold text-foreground">
+                                {remainingQuantity} units remaining
+                              </p>
+                              {bookedQuantity > 0 && (
+                                <p className="text-xs text-orange-600">
+                                  {bookedQuantity} units already booked for this time slot
+                                </p>
+                              )}
+                              <p className="text-xs text-muted-foreground">
+                                Total capacity: {totalQuantity} units
+                              </p>
+                            </div>
+                          );
+                        })()}
                       </div>
                       
                       {/* Set Quantity Input */}
@@ -409,10 +664,20 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
                           id={`quantity-${availability.requirementId}`}
                           type="number"
                           min="0"
-                          max={requirements.find(req => req._id === availability.requirementId)?.totalQuantity || 1}
+                          max={(() => {
+                            const requirement = requirements.find(req => req._id === availability.requirementId);
+                            const totalQuantity = requirement?.totalQuantity || 1;
+                            const bookings = departmentBookings[availability.requirementId] || [];
+                            const bookedQuantity = bookings.reduce((sum, booking) => sum + booking.quantity, 0);
+                            return Math.max(0, totalQuantity - bookedQuantity);
+                          })()}
                           value={availability.quantity}
                           onChange={(e) => {
-                            const maxQuantity = requirements.find(req => req._id === availability.requirementId)?.totalQuantity || 1;
+                            const requirement = requirements.find(req => req._id === availability.requirementId);
+                            const totalQuantity = requirement?.totalQuantity || 1;
+                            const bookings = departmentBookings[availability.requirementId] || [];
+                            const bookedQuantity = bookings.reduce((sum, booking) => sum + booking.quantity, 0);
+                            const maxQuantity = Math.max(0, totalQuantity - bookedQuantity);
                             updateAvailability(availability.requirementId, { 
                               quantity: Math.max(0, Math.min(maxQuantity, parseInt(e.target.value) || 0))
                             });
@@ -544,8 +809,121 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
               )}
                 </div>
               )}
+                </TabsContent>
+                
+                <TabsContent value="bookings" className="p-6 mt-0">
+                  <div className="space-y-6">
+                    <div className="text-center">
+                      <h3 className="text-lg font-semibold mb-2">Department Bookings</h3>
+                      <p className="text-sm text-muted-foreground">
+                        View which departments have booked requirements on {selectedDate ? format(selectedDate, 'MMMM dd, yyyy') : 'this date'}
+                      </p>
+                    </div>
+
+                    {loadingBookings ? (
+                      <div className="text-center py-12">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                        <p className="text-sm text-muted-foreground">Loading department bookings...</p>
+                      </div>
+                    ) : (
+                      requirements.map(requirement => {
+                      const bookings = departmentBookings[requirement._id] || [];
+                      const totalQuantityBooked = bookings.reduce((sum, booking) => sum + booking.quantity, 0);
+                      
+                      return (
+                        <div key={requirement._id} className="space-y-4">
+                          <div className="flex items-center gap-2 pb-2 border-b">
+                            {requirement.type === 'physical' ? (
+                              <Package className="w-5 h-5 text-purple-600" />
+                            ) : (
+                              <Settings className="w-5 h-5 text-orange-600" />
+                            )}
+                            <h4 className="text-md font-semibold">{requirement.text}</h4>
+                            <Badge variant="outline" className="ml-auto">
+                              {requirement.type === 'physical' 
+                                ? `${totalQuantityBooked}/${requirement.totalQuantity || 1} booked`
+                                : `${bookings.length} booking${bookings.length !== 1 ? 's' : ''}`
+                              }
+                            </Badge>
+                          </div>
+
+                          {bookings.length === 0 ? (
+                            <div className="text-center py-8 text-muted-foreground">
+                              <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                              <p className="text-sm">No bookings for this requirement on this date</p>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 gap-3">
+                              {bookings.map((booking, index) => (
+                                <motion.div
+                                  key={`${booking.eventId}-${index}`}
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ delay: index * 0.05 }}
+                                  className="p-4 rounded-lg border border-border bg-card text-card-foreground shadow-sm"
+                                >
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex items-start gap-3 flex-1">
+                                      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-blue-100 text-blue-600">
+                                        <Building2 className="w-4 h-4" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <h5 className="font-medium text-foreground text-sm leading-tight mb-1">
+                                          {booking.eventTitle}
+                                        </h5>
+                                        <div className="flex items-center gap-4 text-xs text-muted-foreground mb-2">
+                                          <span className="flex items-center gap-1">
+                                            <Building2 className="w-3 h-3" />
+                                            {booking.departmentName}
+                                          </span>
+                                          <span className="flex items-center gap-1">
+                                            <Users className="w-3 h-3" />
+                                            {booking.requestor}
+                                          </span>
+                                          {requirement.type === 'physical' && (
+                                            <span className="flex items-center gap-1">
+                                              <Package className="w-3 h-3" />
+                                              Qty: {booking.quantity}
+                                            </span>
+                                          )}
+                                          {booking.startTime && booking.endTime && (
+                                            <span className="flex items-center gap-1">
+                                              <Clock className="w-3 h-3" />
+                                              {formatTime12Hour(booking.startTime)} - {formatTime12Hour(booking.endTime)}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {booking.notes && (
+                                          <p className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
+                                            {booking.notes}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="gap-1 h-7 px-2 text-xs"
+                                      onClick={() => handleViewEvent(booking.eventId)}
+                                      disabled={loadingEventDetails}
+                                    >
+                                      <Eye className="w-3 h-3" />
+                                      {loadingEventDetails ? 'Loading...' : 'View Event'}
+                                    </Button>
+                                  </div>
+                                </motion.div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                    )}
+                  </div>
+                </TabsContent>
+              </ScrollArea>
             </div>
-          </ScrollArea>
+          </Tabs>
         </div>
 
         {/* Fixed Footer */}
@@ -585,6 +963,92 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
         </div>
       </DialogContent>
     </Dialog>
+
+    {/* Event Details Modal */}
+    <Dialog open={showEventModal} onOpenChange={setShowEventModal}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Eye className="w-5 h-5 text-blue-600" />
+            Event Details
+          </DialogTitle>
+        </DialogHeader>
+
+        {selectedEventDetails && (
+          <div className="space-y-6 py-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Left Column */}
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm font-medium text-gray-700">Event Title</Label>
+                  <p className="text-sm text-gray-900 mt-1 font-medium">{selectedEventDetails.eventTitle}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-700">Requestor</Label>
+                  <p className="text-sm text-gray-900 mt-1">{selectedEventDetails.requestor}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-700">Location</Label>
+                  <p className="text-sm text-gray-900 mt-1">{selectedEventDetails.location}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-700">Tagged Departments</Label>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {selectedEventDetails.taggedDepartments.map((dept, index) => (
+                      <Badge key={index} variant="outline" className="text-xs">
+                        {dept}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column */}
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm font-medium text-gray-700">Start Date & Time</Label>
+                  <p className="text-sm text-gray-900 mt-1">
+                    {format(new Date(selectedEventDetails.startDate), 'MMM dd, yyyy')} at {formatTime12Hour(selectedEventDetails.startTime)}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-700">End Date & Time</Label>
+                  <p className="text-sm text-gray-900 mt-1">
+                    {format(new Date(selectedEventDetails.endDate), 'MMM dd, yyyy')} at {formatTime12Hour(selectedEventDetails.endTime)}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-700">Participants</Label>
+                  <div className="flex items-center gap-4 mt-1">
+                    <div className="flex items-center gap-1">
+                      <Users className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm text-gray-900">{selectedEventDetails.participants} Total</span>
+                    </div>
+                    {selectedEventDetails.vip && selectedEventDetails.vip > 0 && (
+                      <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-800 border-yellow-200">
+                        {selectedEventDetails.vip} VIP
+                      </Badge>
+                    )}
+                    {selectedEventDetails.vvip && selectedEventDetails.vvip > 0 && (
+                      <Badge variant="outline" className="text-xs bg-purple-50 text-purple-800 border-purple-200">
+                        {selectedEventDetails.vvip} VVIP
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-4 border-t">
+              <Button variant="outline" onClick={() => setShowEventModal(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 };
 

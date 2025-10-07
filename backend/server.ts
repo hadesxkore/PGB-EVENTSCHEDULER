@@ -8,6 +8,8 @@ import eventRoutes from './routes/events.js';
 import userRoutes from './routes/users.js';
 import departmentRoutes from './routes/departments.js';
 import resourceAvailabilityRoutes from './routes/resourceAvailability.js';
+import locationAvailabilityRoutes from './routes/locationAvailability.js';
+import departmentPermissionsRoutes from './routes/departmentPermissions.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -38,6 +40,8 @@ app.use('/api/events', eventRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/resource-availability', resourceAvailabilityRoutes);
+app.use('/api/location-availability', locationAvailabilityRoutes);
+app.use('/api/department-permissions', departmentPermissionsRoutes);
 
 // Health check route
 app.get('/api/health', (req, res) => {
@@ -81,6 +85,8 @@ const startServer = async () => {
       console.log(`📅 Events API: http://localhost:${PORT}/api/events`);
       console.log(`👥 Users API: http://localhost:${PORT}/api/users`);
       console.log(`🏢 Departments API: http://localhost:${PORT}/api/departments`);
+      console.log(`📦 Resource Availability API: http://localhost:${PORT}/api/resource-availability`);
+      console.log(`🗺️ Location Availability API: http://localhost:${PORT}/api/location-availability`);
       console.log('─'.repeat(50));
     });
   } catch (error) {

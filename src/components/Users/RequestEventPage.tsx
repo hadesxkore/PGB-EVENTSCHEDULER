@@ -169,24 +169,8 @@ const RequestEventPage: React.FC = () => {
   // Check if attachments step is completed
   const isAttachmentsCompleted = formData.noAttachments || formData.attachments.length > 0;
 
-  const locations = [
-    'Add Custom Location',
-    'Atrium',
-    'Grand Lobby Entrance',
-    'Main Entrance Lobby',
-    'Main Entrance Leasable Area',
-    '4th Flr. Conference Room 1',
-    '4th Flr. Conference Room 2',
-    '4th Flr. Conference Room 3',
-    '5th Flr. Training Room 1 (BAC)',
-    '5th Flr. Training Room 2',
-    '6th Flr. DPOD',
-    'Bataan People\'s Center',
-    'Capitol Quadrangle',
-    '1BOSSCO',
-    'Emiliana Hall',
-    'Pavillion'
-  ];
+  const [locations, setLocations] = useState<string[]>(['Add Custom Location']);
+  const [availableDates, setAvailableDates] = useState<Date[]>([]);
 
 
   const defaultRequirements: DepartmentRequirements = {};
@@ -220,6 +204,89 @@ const RequestEventPage: React.FC = () => {
     fetchDepartments();
   }, []);
 
+  // Fetch locations from locationAvailabilities API
+  useEffect(() => {
+    const fetchLocations = async () => {
+      try {
+        const token = localStorage.getItem('authToken');
+        const headers = {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        };
+
+        const response = await axios.get(`${API_BASE_URL}/location-availability`, { headers });
+
+        if (response.data.success) {
+          // Extract unique location names
+          const uniqueLocations = [...new Set(response.data.data.map((item: any) => item.locationName))] as string[];
+          // Add "Add Custom Location" at the beginning
+          setLocations(['Add Custom Location', ...uniqueLocations]);
+          console.log('✅ Locations loaded:', uniqueLocations);
+        }
+      } catch (error) {
+        console.error('Error fetching locations:', error);
+        // Keep default "Add Custom Location" if fetch fails
+        setLocations(['Add Custom Location']);
+      }
+    };
+
+    fetchLocations();
+  }, []);
+
+  // Fetch available dates for a specific location
+  const fetchAvailableDatesForLocation = async (locationName: string) => {
+    try {
+      const token = localStorage.getItem('authToken');
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      };
+
+      const response = await axios.get(`${API_BASE_URL}/location-availability`, { headers });
+
+      if (response.data.success) {
+        // Filter availability records for the selected location
+        const locationAvailabilities = response.data.data.filter(
+          (item: any) => item.locationName === locationName && item.status === 'available'
+        );
+        
+        // Convert date strings to Date objects
+        const dates = locationAvailabilities.map((item: any) => new Date(item.date));
+        setAvailableDates(dates);
+        
+        console.log('✅ Available dates for', locationName, ':', dates);
+      }
+    } catch (error) {
+      console.error('Error fetching available dates:', error);
+      setAvailableDates([]);
+    }
+  };
+
+  // Check if a date should be disabled (not available for the selected location)
+  const isDateDisabled = (date: Date) => {
+    if (availableDates.length === 0) {
+      return false; // If no available dates loaded yet, don't disable any dates
+    }
+    
+    // Check if the date is in the available dates list
+    return !availableDates.some(availableDate => 
+      availableDate.toDateString() === date.toDateString()
+    );
+  };
+
+  // Auto-check for conflicts when schedule changes
+  useEffect(() => {
+    const checkConflicts = async () => {
+      if (formData.startDate && formData.startTime && formData.endTime && formData.location && showScheduleModal) {
+        await fetchConflictingEvents(formData.startDate, formData.startTime, formData.endTime, formData.location);
+      }
+    };
+
+    // Debounce the conflict checking to avoid too many API calls
+    const timeoutId = setTimeout(checkConflicts, 500);
+    return () => clearTimeout(timeoutId);
+  }, [formData.startDate, formData.startTime, formData.endTime, formData.location, showScheduleModal]);
+
   const handleInputChange = (field: keyof FormData, value: string | boolean | File[] | string[] | DepartmentRequirements | Date | undefined) => {
     setFormData(prev => ({
       ...prev,
@@ -227,20 +294,42 @@ const RequestEventPage: React.FC = () => {
     }));
   };
 
-  const handleLocationChange = (value: string) => {
+  const handleLocationChange = async (value: string) => {
     if (value === 'Add Custom Location') {
       setShowCustomLocation(true);
       handleInputChange('location', '');
+      setAvailableDates([]); // Clear available dates
     } else {
       setShowCustomLocation(false);
       handleInputChange('location', value);
+      
+      // Fetch available dates for the selected location
+      await fetchAvailableDatesForLocation(value);
+      
       // Open schedule modal when a location is selected
       setSelectedLocation(value);
       setShowScheduleModal(true);
     }
   };
 
-  const handleScheduleSave = () => {
+  const handleScheduleSave = async () => {
+    // Check for conflicts before saving
+    if (formData.startDate && formData.startTime && formData.endTime && formData.location) {
+      const conflicts = await fetchConflictingEvents(
+        formData.startDate, 
+        formData.startTime, 
+        formData.endTime, 
+        formData.location
+      );
+      
+      if (conflicts.length > 0) {
+        toast.error(`Time conflict detected! There are ${conflicts.length} existing event(s) at ${formData.location} during this time.`, {
+          duration: 5000,
+        });
+        return; // Don't close modal if there are conflicts
+      }
+    }
+    
     setShowScheduleModal(false);
     setSelectedLocation('');
   };
@@ -266,8 +355,8 @@ const RequestEventPage: React.FC = () => {
       
       // Fetch conflicting events if date and time are set
       if (formData.startDate && formData.startTime && formData.endTime) {
-        console.log('🔍 Checking conflicts for:', formData.startDate, formData.startTime, '-', formData.endTime);
-        await fetchConflictingEvents(formData.startDate, formData.startTime, formData.endTime);
+        console.log('🔍 Checking conflicts for:', formData.startDate, formData.startTime, '-', formData.endTime, 'at', formData.location);
+        await fetchConflictingEvents(formData.startDate, formData.startTime, formData.endTime, formData.location);
       }
       
       setShowRequirementsModal(true);
@@ -450,8 +539,8 @@ const RequestEventPage: React.FC = () => {
     return start1Minutes < end2Minutes && start2Minutes < end1Minutes;
   };
 
-  // Fetch conflicting events for a specific date and time
-  const fetchConflictingEvents = async (date: Date, startTime: string, endTime: string) => {
+  // Fetch conflicting events for a specific date, time, and location
+  const fetchConflictingEvents = async (date: Date, startTime: string, endTime: string, location?: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/events`, {
         headers: {
@@ -467,9 +556,14 @@ const RequestEventPage: React.FC = () => {
       const eventsData = await response.json();
       const events = eventsData.data || [];
       
-      // Filter events that conflict with the selected time
+      // Filter events that conflict with the selected time and location
       const conflicts = events.filter((event: any) => {
         if (!event.startDate || !event.startTime || !event.endDate || !event.endTime) {
+          return false;
+        }
+        
+        // If location is specified, only check conflicts for the same location
+        if (location && event.location && event.location !== location) {
           return false;
         }
         
@@ -492,37 +586,48 @@ const RequestEventPage: React.FC = () => {
     }
   };
 
-  // Calculate available quantity after subtracting conflicting bookings
+  // Calculate available quantity after subtracting conflicting bookings from ALL departments
   const getAvailableQuantity = (requirement: any, departmentName: string) => {
     let usedQuantity = 0;
     
     conflictingEvents.forEach(event => {
-      if (event.taggedDepartments && event.taggedDepartments.includes(departmentName)) {
-        const eventReqs = event.departmentRequirements?.[departmentName];
-        if (Array.isArray(eventReqs)) {
-          const matchingReq = eventReqs.find((req: any) => 
-            req.name === requirement.name && req.selected && req.quantity
-          );
-          if (matchingReq) {
-            usedQuantity += matchingReq.quantity || 0;
+      // Check ALL departments in the event, not just the current department
+      if (event.taggedDepartments && event.departmentRequirements) {
+        event.taggedDepartments.forEach((taggedDept: string) => {
+          const eventReqs = event.departmentRequirements[taggedDept];
+          if (Array.isArray(eventReqs)) {
+            const matchingReq = eventReqs.find((req: any) => 
+              req.name === requirement.name && req.selected && req.quantity
+            );
+            if (matchingReq) {
+              usedQuantity += matchingReq.quantity || 0;
+              console.log(`🔍 Found conflict: ${taggedDept} booked ${matchingReq.quantity} ${requirement.name} for event "${event.eventTitle}"`);
+            }
           }
-        }
+        });
       }
     });
     
-    return Math.max(0, (requirement.totalQuantity || 0) - usedQuantity);
+    const availableQuantity = Math.max(0, (requirement.totalQuantity || 0) - usedQuantity);
+    console.log(`📊 ${requirement.name}: Total=${requirement.totalQuantity}, Used=${usedQuantity}, Available=${availableQuantity}`);
+    
+    return availableQuantity;
   };
 
-  // Check if a specific requirement has conflicts (is actually booked by other events)
+  // Check if a specific requirement has conflicts (is actually booked by other events from ANY department)
   const hasRequirementConflict = (requirement: any, departmentName: string) => {
     return conflictingEvents.some(event => {
-      if (event.taggedDepartments && event.taggedDepartments.includes(departmentName)) {
-        const eventReqs = event.departmentRequirements?.[departmentName];
-        if (Array.isArray(eventReqs)) {
-          return eventReqs.some((req: any) => 
-            req.name === requirement.name && req.selected && req.quantity
-          );
-        }
+      // Check ALL departments in the event, not just the current department
+      if (event.taggedDepartments && event.departmentRequirements) {
+        return event.taggedDepartments.some((taggedDept: string) => {
+          const eventReqs = event.departmentRequirements[taggedDept];
+          if (Array.isArray(eventReqs)) {
+            return eventReqs.some((req: any) => 
+              req.name === requirement.name && req.selected && req.quantity
+            );
+          }
+          return false;
+        });
       }
       return false;
     });
@@ -620,6 +725,22 @@ const RequestEventPage: React.FC = () => {
       // Contact information
       formDataToSubmit.append('contactNumber', formData.contactNumber);
       formDataToSubmit.append('contactEmail', formData.contactEmail);
+      
+      // Add current user's department information
+      const userData = localStorage.getItem('userData');
+      if (userData) {
+        try {
+          const user = JSON.parse(userData);
+          const userDepartment = user.department || user.departmentName || 'Unknown';
+          formDataToSubmit.append('requestorDepartment', userDepartment);
+          console.log('Adding requestor department:', userDepartment);
+        } catch (error) {
+          console.error('Error parsing user data:', error);
+          formDataToSubmit.append('requestorDepartment', 'Unknown');
+        }
+      } else {
+        formDataToSubmit.append('requestorDepartment', 'Unknown');
+      }
       
       // Department and requirements information
       formDataToSubmit.append('taggedDepartments', JSON.stringify(formData.taggedDepartments));
@@ -1564,12 +1685,28 @@ const RequestEventPage: React.FC = () => {
       <Dialog open={showRequirementsModal} onOpenChange={setShowRequirementsModal}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="text-lg font-medium">
-              Requirements - {selectedDepartment}
-            </DialogTitle>
-            <DialogDescription className="text-sm text-muted-foreground">
-              Select requirements for this department
-            </DialogDescription>
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <DialogTitle className="text-lg font-medium">
+                  Requirements - {selectedDepartment}
+                </DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground">
+                  Select requirements for this department
+                </DialogDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setShowRequirementsModal(false);
+                  setShowScheduleModal(true);
+                }}
+                className="gap-2 ml-4"
+              >
+                <CalendarIcon className="w-4 h-4" />
+                Edit Schedule
+              </Button>
+            </div>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
@@ -1725,7 +1862,7 @@ const RequestEventPage: React.FC = () => {
                         }`}>
                           ({requirement.quantity}
                           {requirement.totalQuantity && requirement.quantity > requirement.totalQuantity && (
-                            <span className="text-xs"> ⚠️</span>
+                            <AlertTriangle className="w-3 h-3 text-red-500 inline ml-1" />
                           )})
                         </span>
                       )}
@@ -1877,6 +2014,12 @@ const RequestEventPage: React.FC = () => {
               <p className="text-sm text-gray-600 mt-1">
                 Select your preferred start and end date/time for the event.
               </p>
+              {availableDates.length > 0 && (
+                <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
+                  <CalendarIcon className="w-3 h-3" />
+                  Only dates when {selectedLocation} is available can be selected ({availableDates.length} available date{availableDates.length !== 1 ? 's' : ''})
+                </p>
+              )}
             </div>
           </div>
 
@@ -1902,6 +2045,7 @@ const RequestEventPage: React.FC = () => {
                       mode="single"
                       selected={formData.startDate}
                       onSelect={(date) => handleInputChange('startDate', date)}
+                      disabled={isDateDisabled}
                       initialFocus
                     />
                   </PopoverContent>
@@ -1942,6 +2086,7 @@ const RequestEventPage: React.FC = () => {
                       mode="single"
                       selected={formData.endDate}
                       onSelect={(date) => handleInputChange('endDate', date)}
+                      disabled={isDateDisabled}
                       initialFocus
                     />
                   </PopoverContent>
@@ -1973,6 +2118,34 @@ const RequestEventPage: React.FC = () => {
                   {formData.endDate && formData.endTime && (
                     <p><strong>End:</strong> {format(formData.endDate, "PPP")} at {formatTime(formData.endTime)}</p>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* Conflict Warning */}
+            {conflictingEvents.length > 0 && formData.location && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <h4 className="font-medium text-red-900 mb-2 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  Schedule Conflict Detected
+                </h4>
+                <div className="text-sm text-red-800">
+                  <p className="mb-2">
+                    <strong>{conflictingEvents.length}</strong> existing event(s) conflict with your selected time at <strong>{formData.location}</strong>:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1">
+                    {conflictingEvents.slice(0, 3).map((event: any, index: number) => (
+                      <li key={index}>
+                        <strong>{event.eventTitle}</strong> - {formatTime(event.startTime)} to {formatTime(event.endTime)}
+                      </li>
+                    ))}
+                    {conflictingEvents.length > 3 && (
+                      <li className="text-red-600">...and {conflictingEvents.length - 3} more</li>
+                    )}
+                  </ul>
+                  <p className="mt-2 text-xs">
+                    Please choose a different time or location to avoid conflicts.
+                  </p>
                 </div>
               </div>
             )}

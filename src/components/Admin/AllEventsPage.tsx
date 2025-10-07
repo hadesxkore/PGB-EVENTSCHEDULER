@@ -48,6 +48,7 @@ import {
   FileText,
   CheckCircle,
   XCircle,
+  Paperclip,
   AlertCircle,
   Clock3,
   RefreshCw,
@@ -104,6 +105,7 @@ interface Event {
   };
   taggedDepartments: string[];
   departmentRequirements: any;
+  requestorDepartment?: string;
   status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'completed';
   submittedAt?: string;
   createdAt: string;
@@ -120,6 +122,7 @@ const API_BASE_URL = 'http://localhost:5000/api';
 
 const AllEventsPage: React.FC = () => {
   const [events, setEvents] = useState<Event[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -147,7 +150,31 @@ const AllEventsPage: React.FC = () => {
       
       if (response.data.success) {
         console.log('✅ Events fetched:', response.data.data.length, 'events');
-        setEvents(response.data.data); // Backend returns events in 'data' property
+        const eventsData = response.data.data;
+        setEvents(eventsData);
+        
+        // Extract unique departments from events
+        const uniqueDepartments = new Set<string>();
+        eventsData.forEach((event: Event) => {
+          // From tagged departments
+          if (event.taggedDepartments && event.taggedDepartments.length > 0) {
+            event.taggedDepartments.forEach(dept => {
+              if (dept && dept.trim()) uniqueDepartments.add(dept.trim());
+            });
+          }
+          // From requestor department
+          if (event.requestorDepartment && event.requestorDepartment.trim()) {
+            uniqueDepartments.add(event.requestorDepartment.trim());
+          }
+          // From created by department (fallback)
+          if (event.createdBy?.department && event.createdBy.department.trim()) {
+            uniqueDepartments.add(event.createdBy.department.trim());
+          }
+        });
+        
+        const departmentsList = Array.from(uniqueDepartments).sort();
+        setDepartments(departmentsList);
+        console.log('✅ Departments extracted:', departmentsList);
       } else {
         console.error('❌ API returned error:', response.data);
         toast.error('Failed to fetch events');
@@ -174,7 +201,9 @@ const AllEventsPage: React.FC = () => {
     
     const matchesStatus = statusFilter === 'all' || event.status === statusFilter;
     const matchesDepartment = departmentFilter === 'all' || 
-      (event.createdBy?.department || '').toLowerCase().includes(departmentFilter.toLowerCase());
+      (event.taggedDepartments && event.taggedDepartments.includes(departmentFilter)) ||
+      (event.requestorDepartment && event.requestorDepartment === departmentFilter) ||
+      (event.createdBy?.department && event.createdBy.department === departmentFilter);
 
     return matchesSearch && matchesStatus && matchesDepartment;
   });
@@ -485,7 +514,13 @@ const AllEventsPage: React.FC = () => {
                   if (req.selected) {
                     pdf.setFontSize(9);
                     pdf.setFont('helvetica', 'normal');
-                    const reqText = `${reqIndex + 1}. ${req.name}`;
+                    
+                    // Include quantity information in the requirement text
+                    let reqText = `${reqIndex + 1}. ${req.name}`;
+                    if (req.quantity && req.quantity > 0) {
+                      reqText += ` (Quantity: ${req.quantity})`;
+                    }
+                    
                     const splitReq = pdf.splitTextToSize(reqText, pageWidth - 2 * margin - 10);
                     pdf.text(splitReq, margin + 10, yPosition);
                     yPosition += splitReq.length * 4;
@@ -648,10 +683,11 @@ const AllEventsPage: React.FC = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Departments</SelectItem>
-                  <SelectItem value="IT">IT</SelectItem>
-                  <SelectItem value="HR">HR</SelectItem>
-                  <SelectItem value="Finance">Finance</SelectItem>
-                  <SelectItem value="Operations">Operations</SelectItem>
+                  {departments.map((department) => (
+                    <SelectItem key={department} value={department}>
+                      {department}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -766,18 +802,19 @@ const AllEventsPage: React.FC = () => {
                             </div>
                           </TableCell>
                           <TableCell className="text-right">
-                            <Dialog>
-                              <DialogTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="gap-1"
-                                  onClick={() => setSelectedEvent(event)}
-                                >
-                                  <Eye className="w-3 h-3" />
-                                  View
-                                </Button>
-                              </DialogTrigger>
+                            <div className="flex items-center gap-2 justify-end">
+                              <Dialog>
+                                <DialogTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="gap-1"
+                                    onClick={() => setSelectedEvent(event)}
+                                  >
+                                    <Eye className="w-3 h-3" />
+                                    View
+                                  </Button>
+                                </DialogTrigger>
                               <DialogContent className="max-w-4xl w-[75vw] max-h-[80vh] overflow-y-auto sm:max-w-4xl">
                                 <DialogHeader>
                                   <DialogTitle className="text-xl font-bold">
@@ -1093,6 +1130,217 @@ const AllEventsPage: React.FC = () => {
                                 )}
                               </DialogContent>
                             </Dialog>
+                            
+                            {/* Files Button */}
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="gap-1"
+                                  onClick={() => setSelectedEvent(event)}
+                                >
+                                  <Paperclip className="w-3 h-3" />
+                                  Files
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent className="max-w-4xl w-[75vw] max-h-[80vh] overflow-y-auto">
+                                <DialogHeader>
+                                  <DialogTitle className="text-xl font-bold">
+                                    Event Files - {selectedEvent?.eventTitle}
+                                  </DialogTitle>
+                                  <DialogDescription>
+                                    Attachments and government files for this event
+                                  </DialogDescription>
+                                </DialogHeader>
+                                
+                                {selectedEvent && (
+                                  <div className="space-y-6">
+                                    {/* Event Attachments */}
+                                    <div>
+                                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                                        <Paperclip className="w-5 h-5" />
+                                        Event Attachments
+                                      </h3>
+                                      {selectedEvent.attachments && selectedEvent.attachments.length > 0 ? (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                          {selectedEvent.attachments.map((attachment: any, index: number) => (
+                                            <div key={index} className="border rounded-lg p-4 hover:bg-gray-50">
+                                              <div className="flex items-center justify-between">
+                                                <div className="flex-1">
+                                                  <p className="font-medium text-sm">{attachment.originalName}</p>
+                                                  <p className="text-xs text-gray-500">
+                                                    {attachment.mimetype} • {(attachment.size / 1024).toFixed(1)} KB
+                                                  </p>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-1 h-8"
+                                                    onClick={() => window.open(`${API_BASE_URL}/events/attachment/${attachment.filename}`, '_blank')}
+                                                  >
+                                                    <Eye className="w-3 h-3" />
+                                                    View
+                                                  </Button>
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-1 h-8"
+                                                    onClick={() => {
+                                                      const link = document.createElement('a');
+                                                      link.href = `${API_BASE_URL}/events/attachment/${attachment.filename}`;
+                                                      link.download = attachment.originalName;
+                                                      link.click();
+                                                    }}
+                                                  >
+                                                    <Download className="w-3 h-3" />
+                                                    Download
+                                                  </Button>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <p className="text-gray-500 italic">No attachments uploaded</p>
+                                      )}
+                                    </div>
+
+                                    {/* Government Files */}
+                                    <div>
+                                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                                        <FileText className="w-5 h-5" />
+                                        Government Files
+                                      </h3>
+                                      {selectedEvent.govFiles && Object.keys(selectedEvent.govFiles).length > 0 ? (
+                                        <div className="space-y-4">
+                                          {/* Briefer Template */}
+                                          {selectedEvent.govFiles.brieferTemplate && (
+                                            <div className="border rounded-lg p-4 hover:bg-gray-50">
+                                              <div className="flex items-center justify-between">
+                                                <div className="flex-1">
+                                                  <p className="font-medium text-sm">Briefer Template</p>
+                                                  <p className="text-xs text-gray-500">
+                                                    {selectedEvent.govFiles.brieferTemplate.originalName}
+                                                  </p>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-1 h-8"
+                                                    onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.brieferTemplate?.filename}`, '_blank')}
+                                                  >
+                                                    <Eye className="w-3 h-3" />
+                                                    View
+                                                  </Button>
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-1 h-8"
+                                                    onClick={() => {
+                                                      const link = document.createElement('a');
+                                                      link.href = `${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.brieferTemplate?.filename}`;
+                                                      link.download = selectedEvent.govFiles.brieferTemplate?.originalName || 'briefer-template';
+                                                      link.click();
+                                                    }}
+                                                  >
+                                                    <Download className="w-3 h-3" />
+                                                    Download
+                                                  </Button>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          )}
+
+                                          {/* Available for DL */}
+                                          {selectedEvent.govFiles.availableForDL && (
+                                            <div className="border rounded-lg p-4 hover:bg-gray-50">
+                                              <div className="flex items-center justify-between">
+                                                <div className="flex-1">
+                                                  <p className="font-medium text-sm">Available for DL</p>
+                                                  <p className="text-xs text-gray-500">
+                                                    {selectedEvent.govFiles.availableForDL.originalName}
+                                                  </p>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-1 h-8"
+                                                    onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.availableForDL?.filename}`, '_blank')}
+                                                  >
+                                                    <Eye className="w-3 h-3" />
+                                                    View
+                                                  </Button>
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-1 h-8"
+                                                    onClick={() => {
+                                                      const link = document.createElement('a');
+                                                      link.href = `${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.availableForDL?.filename}`;
+                                                      link.download = selectedEvent.govFiles.availableForDL?.originalName || 'available-for-dl';
+                                                      link.click();
+                                                    }}
+                                                  >
+                                                    <Download className="w-3 h-3" />
+                                                    Download
+                                                  </Button>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          )}
+
+                                          {/* Programme */}
+                                          {selectedEvent.govFiles.programme && (
+                                            <div className="border rounded-lg p-4 hover:bg-gray-50">
+                                              <div className="flex items-center justify-between">
+                                                <div className="flex-1">
+                                                  <p className="font-medium text-sm">Programme</p>
+                                                  <p className="text-xs text-gray-500">
+                                                    {selectedEvent.govFiles.programme.originalName}
+                                                  </p>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-1 h-8"
+                                                    onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.programme?.filename}`, '_blank')}
+                                                  >
+                                                    <Eye className="w-3 h-3" />
+                                                    View
+                                                  </Button>
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-1 h-8"
+                                                    onClick={() => {
+                                                      const link = document.createElement('a');
+                                                      link.href = `${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.programme?.filename}`;
+                                                      link.download = selectedEvent.govFiles.programme?.originalName || 'programme';
+                                                      link.click();
+                                                    }}
+                                                  >
+                                                    <Download className="w-3 h-3" />
+                                                    Download
+                                                  </Button>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <p className="text-gray-500 italic">No government files uploaded</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </DialogContent>
+                            </Dialog>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );

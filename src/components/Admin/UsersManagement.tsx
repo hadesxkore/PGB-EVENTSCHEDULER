@@ -27,6 +27,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -37,11 +53,15 @@ import {
   Trash2,
   Eye,
   EyeOff,
-  UserPlus
+  UserPlus,
+  Settings,
+  Package,
+  MapPin
 } from 'lucide-react';
 
 interface User {
-  id: string;
+  _id: string;
+  id?: string; // Fallback for compatibility
   username: string;
   email: string;
   department: string;
@@ -59,11 +79,50 @@ interface NewUser {
   confirmPassword: string;
 }
 
+interface DepartmentPermissions {
+  department: string;
+  permissions: {
+    myRequirements: boolean;
+    manageLocation: boolean;
+  };
+}
+
+interface EditUser {
+  id: string;
+  username: string;
+  email: string;
+  status: 'active' | 'inactive';
+  newPassword: string;
+  confirmPassword: string;
+}
+
 const UsersManagement: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showEditPassword, setShowEditPassword] = useState(false);
+  const [showEditConfirmPassword, setShowEditConfirmPassword] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showPermissionsModal, setShowPermissionsModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('');
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [editingUser, setEditingUser] = useState<EditUser>({
+    id: '',
+    username: '',
+    email: '',
+    status: 'active',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [departmentPermissions, setDepartmentPermissions] = useState<DepartmentPermissions>({
+    department: '',
+    permissions: {
+      myRequirements: false,
+      manageLocation: false
+    }
+  });
   const [newUser, setNewUser] = useState<NewUser>({
     department: '',
     departmentEmail: '',
@@ -162,6 +221,170 @@ const UsersManagement: React.FC = () => {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  // Fetch department permissions
+  const fetchDepartmentPermissions = async (department: string) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/department-permissions/${department}`, {
+        headers: getAuthHeaders()
+      });
+      
+      if (response.data.success) {
+        setDepartmentPermissions(response.data.data);
+      }
+    } catch (error: any) {
+      console.error('Error fetching department permissions:', error);
+      // If no permissions found, use defaults
+      setDepartmentPermissions({
+        department,
+        permissions: {
+          myRequirements: false,
+          manageLocation: false
+        }
+      });
+    }
+  };
+
+  // Update department permissions
+  const updateDepartmentPermissions = async () => {
+    try {
+      setLoading(true);
+      const response = await axios.put(
+        `${API_BASE_URL}/department-permissions/${selectedDepartment}`,
+        { permissions: departmentPermissions.permissions },
+        { headers: getAuthHeaders() }
+      );
+      
+      if (response.data.success) {
+        toast.success('Department permissions updated successfully!');
+        setShowPermissionsModal(false);
+      }
+    } catch (error: any) {
+      console.error('Error updating department permissions:', error);
+      toast.error(error.response?.data?.message || 'Failed to update permissions');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle opening permissions modal
+  const handleEditPermissions = async (department: string) => {
+    setSelectedDepartment(department);
+    await fetchDepartmentPermissions(department);
+    setShowPermissionsModal(true);
+  };
+
+  // Handle opening edit user modal
+  const handleEditUser = (user: User) => {
+    console.log('🔍 User object for editing:', user);
+    console.log('🆔 User ID fields:', { _id: user._id, id: user.id });
+    
+    const userId = user._id || user.id || '';
+    console.log('✅ Selected user ID:', userId);
+    
+    setEditingUser({
+      id: userId,
+      username: user.username,
+      email: user.email,
+      status: user.status,
+      newPassword: '',
+      confirmPassword: ''
+    });
+    setShowEditModal(true);
+  };
+
+  // Handle editing user input changes
+  const handleEditInputChange = (field: keyof EditUser, value: string) => {
+    setEditingUser(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  // Update user information
+  const handleUpdateUser = async () => {
+    try {
+      setLoading(true);
+      
+      // Validate password if provided
+      if (editingUser.newPassword || editingUser.confirmPassword) {
+        if (editingUser.newPassword !== editingUser.confirmPassword) {
+          toast.error('Passwords do not match');
+          return;
+        }
+        if (editingUser.newPassword.length < 6) {
+          toast.error('Password must be at least 6 characters long');
+          return;
+        }
+      }
+
+      // Prepare update data
+      const updateData: any = {
+        username: editingUser.username,
+        email: editingUser.email,
+        status: editingUser.status
+      };
+
+      // Add password if provided
+      if (editingUser.newPassword) {
+        updateData.password = editingUser.newPassword;
+      }
+      
+      const response = await axios.put(`${API_BASE_URL}/users/${editingUser.id}`, updateData, {
+        headers: getAuthHeaders()
+      });
+
+      if (response.data.success) {
+        toast.success('User updated successfully!');
+        await fetchUsers(); // Refresh the users list
+        setShowEditModal(false);
+      }
+    } catch (error: any) {
+      console.error('Error updating user:', error);
+      toast.error(error.response?.data?.message || 'Failed to update user');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle opening delete confirmation dialog
+  const handleDeleteUser = (user: User) => {
+    console.log('🗑️ Preparing to delete user:', user.username);
+    setUserToDelete(user);
+    setShowDeleteDialog(true);
+  };
+
+  // Confirm and delete user
+  const confirmDeleteUser = async () => {
+    if (!userToDelete) return;
+
+    try {
+      setLoading(true);
+      console.log('🗑️ Deleting user:', userToDelete.username);
+      
+      const response = await axios.delete(`${API_BASE_URL}/users/${userToDelete._id || userToDelete.id}`, {
+        headers: getAuthHeaders()
+      });
+
+      if (response.data.success) {
+        toast.success(`User "${userToDelete.username}" deleted successfully!`);
+        await fetchUsers(); // Refresh the users list
+        setShowDeleteDialog(false);
+        setUserToDelete(null);
+      }
+    } catch (error: any) {
+      console.error('Error deleting user:', error);
+      toast.error(error.response?.data?.message || 'Failed to delete user');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Cancel delete operation
+  const cancelDeleteUser = () => {
+    setShowDeleteDialog(false);
+    setUserToDelete(null);
+  };
 
   const handleInputChange = (field: keyof NewUser, value: string) => {
     setNewUser(prev => ({
@@ -344,7 +567,7 @@ const UsersManagement: React.FC = () => {
               </TableHeader>
               <TableBody>
                 {filteredUsers.map((user) => (
-                  <TableRow key={user.id}>
+                  <TableRow key={user._id || user.id}>
                     <TableCell className="font-medium">{user.username}</TableCell>
                     <TableCell>{user.email}</TableCell>
                     <TableCell>{user.department}</TableCell>
@@ -361,10 +584,29 @@ const UsersManagement: React.FC = () => {
                     <TableCell>{user.createdAt}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end space-x-2">
-                        <Button variant="ghost" size="sm">
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => handleEditUser(user)}
+                          title="Edit User Information"
+                        >
                           <Edit className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700">
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => handleEditPermissions(user.department)}
+                          title="Edit Department Permissions"
+                        >
+                          <Settings className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="text-red-600 hover:text-red-700"
+                          onClick={() => handleDeleteUser(user)}
+                          title="Delete User"
+                        >
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
@@ -516,6 +758,294 @@ const UsersManagement: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Department Permissions Modal */}
+      <Dialog open={showPermissionsModal} onOpenChange={setShowPermissionsModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="w-5 h-5" />
+              Department Sidebar Permissions
+            </DialogTitle>
+            <DialogDescription>
+              Control which sidebar buttons are visible for <strong>{selectedDepartment}</strong> department users.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-6">
+            {/* My Requirements Permission */}
+            <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex items-center gap-3">
+                <Package className="w-5 h-5 text-blue-600" />
+                <div>
+                  <h4 className="font-medium">My Requirements</h4>
+                  <p className="text-sm text-gray-600">Allow users to view and manage their department requirements</p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="myRequirements"
+                  checked={departmentPermissions.permissions.myRequirements}
+                  onChange={(e) => setDepartmentPermissions(prev => ({
+                    ...prev,
+                    permissions: {
+                      ...prev.permissions,
+                      myRequirements: e.target.checked
+                    }
+                  }))}
+                  className="w-4 h-4 text-red-600 bg-gray-100 border-gray-300 rounded focus:ring-red-500"
+                />
+              </div>
+            </div>
+
+            {/* Manage Location Permission */}
+            <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex items-center gap-3">
+                <MapPin className="w-5 h-5 text-green-600" />
+                <div>
+                  <h4 className="font-medium">Manage Location</h4>
+                  <p className="text-sm text-gray-600">Allow users to manage location availability and bookings</p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="manageLocation"
+                  checked={departmentPermissions.permissions.manageLocation}
+                  onChange={(e) => setDepartmentPermissions(prev => ({
+                    ...prev,
+                    permissions: {
+                      ...prev.permissions,
+                      manageLocation: e.target.checked
+                    }
+                  }))}
+                  className="w-4 h-4 text-red-600 bg-gray-100 border-gray-300 rounded focus:ring-red-500"
+                />
+              </div>
+            </div>
+
+            {/* Info Note */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-sm text-blue-800">
+                <strong>Note:</strong> Changes will apply to all users in the {selectedDepartment} department. 
+                Users may need to refresh their browser to see the updated sidebar.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPermissionsModal(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={updateDepartmentPermissions} 
+              className="bg-red-600 hover:bg-red-700"
+              disabled={loading}
+            >
+              {loading ? 'Updating...' : 'Update Permissions'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit User Modal */}
+      <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Edit className="w-5 h-5" />
+              Edit User Information
+            </DialogTitle>
+            <DialogDescription>
+              Update user details for <strong>{editingUser.username}</strong>
+            </DialogDescription>
+          </DialogHeader>
+          
+          <Tabs defaultValue="basic" className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="basic">Basic Information</TabsTrigger>
+              <TabsTrigger value="password">Change Password</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="basic" className="space-y-4 mt-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="editUsername">Username</Label>
+                  <Input
+                    id="editUsername"
+                    placeholder="Enter username"
+                    value={editingUser.username}
+                    onChange={(e) => handleEditInputChange('username', e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="editEmail">Email</Label>
+                  <Input
+                    id="editEmail"
+                    type="email"
+                    placeholder="user@bataan.gov.ph"
+                    value={editingUser.email}
+                    onChange={(e) => handleEditInputChange('email', e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="editStatus">Status</Label>
+                <Select value={editingUser.status} onValueChange={(value) => handleEditInputChange('status', value as 'active' | 'inactive')}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-sm text-blue-800">
+                  <strong>Note:</strong> Username and email changes will affect the user's login credentials. 
+                  Status changes will activate or deactivate the user account.
+                </p>
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="password" className="space-y-4 mt-4">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="newPassword">New Password</Label>
+                  <div className="relative">
+                    <Input
+                      id="newPassword"
+                      type={showEditPassword ? "text" : "password"}
+                      placeholder="Enter new password"
+                      value={editingUser.newPassword}
+                      onChange={(e) => handleEditInputChange('newPassword', e.target.value)}
+                      className="pr-10"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                      onClick={() => setShowEditPassword(!showEditPassword)}
+                    >
+                      {showEditPassword ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword">Confirm New Password</Label>
+                  <div className="relative">
+                    <Input
+                      id="confirmPassword"
+                      type={showEditConfirmPassword ? "text" : "password"}
+                      placeholder="Confirm new password"
+                      value={editingUser.confirmPassword}
+                      onChange={(e) => handleEditInputChange('confirmPassword', e.target.value)}
+                      className="pr-10"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                      onClick={() => setShowEditConfirmPassword(!showEditConfirmPassword)}
+                    >
+                      {showEditConfirmPassword ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                  <p className="text-sm text-yellow-800">
+                    <strong>Security Note:</strong> Password must be at least 6 characters long. 
+                    Leave password fields empty if you don't want to change the password.
+                  </p>
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditModal(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleUpdateUser} 
+              className="bg-red-600 hover:bg-red-700"
+              disabled={loading}
+            >
+              {loading ? 'Updating...' : 'Update User'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete User Confirmation Dialog */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+              <Trash2 className="w-5 h-5" />
+              Delete User Account
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>
+                Are you sure you want to delete the user account for{' '}
+                <strong className="text-red-600">{userToDelete?.username}</strong>?
+              </p>
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mt-3">
+                <p className="text-sm text-red-800">
+                  <strong>⚠️ Warning:</strong> This action cannot be undone. All user data will be permanently deleted:
+                </p>
+                <ul className="text-sm text-red-700 mt-2 ml-4 list-disc">
+                  <li>User account and login credentials</li>
+                  <li>User profile information</li>
+                  <li>Associated permissions and access rights</li>
+                  <li>All user activity history</li>
+                </ul>
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-3">
+                <p className="text-sm text-blue-800">
+                  <strong>📋 User Details:</strong>
+                </p>
+                <ul className="text-sm text-blue-700 mt-1">
+                  <li><strong>Username:</strong> {userToDelete?.username}</li>
+                  <li><strong>Email:</strong> {userToDelete?.email}</li>
+                  <li><strong>Department:</strong> {userToDelete?.department}</li>
+                  <li><strong>Role:</strong> {userToDelete?.role}</li>
+                  <li><strong>Status:</strong> {userToDelete?.status}</li>
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={cancelDeleteUser}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteUser}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={loading}
+            >
+              {loading ? 'Deleting...' : 'Delete User'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

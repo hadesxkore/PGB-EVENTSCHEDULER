@@ -54,6 +54,7 @@ const MyCalendarPage: React.FC = () => {
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [availabilityData, setAvailabilityData] = useState<ResourceAvailabilityData[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [events, setEvents] = useState<any[]>([]);
 
   // Get current user and department info
   useEffect(() => {
@@ -73,6 +74,9 @@ const MyCalendarPage: React.FC = () => {
           // Fallback to API call
           fetchDepartmentRequirements(user.department || 'PGSO');
         }
+        
+        // Fetch events for calendar display
+        fetchEvents();
       } catch (error) {
         console.error('Error parsing user data:', error);
         setLoading(false);
@@ -140,6 +144,31 @@ const MyCalendarPage: React.FC = () => {
     }
   };
 
+  // Fetch events for calendar display
+  const fetchEvents = async () => {
+    try {
+      const token = localStorage.getItem('authToken');
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      };
+
+      const response = await fetch('http://localhost:5000/api/events', {
+        headers
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch events');
+      }
+
+      const eventsData = await response.json();
+      setEvents(eventsData.data || []);
+    } catch (error) {
+      console.error('Error fetching events:', error);
+      setEvents([]);
+    }
+  };
+
   // Fetch availability data
   const fetchAvailabilityData = async (departmentId: string) => {
     try {
@@ -164,40 +193,123 @@ const MyCalendarPage: React.FC = () => {
     }
   };
 
-  // Convert availability data to calendar events
-  const calendarEvents: CalendarEvent[] = availabilityData.reduce((events, availability) => {
-    const existingEvent = events.find(e => e.date === availability.date);
+  // Convert events to calendar events with colored cells and event titles
+  const calendarEvents: CalendarEvent[] = [];
+  
+  // Group events by date first to avoid duplicates
+  const eventsByDate: { [date: string]: any[] } = {};
+  
+  events.forEach((event) => {
+    // Parse dates using local timezone to avoid UTC conversion issues
+    const eventStartDate = new Date(event.startDate);
+    const eventEndDate = new Date(event.endDate);
     
-    if (existingEvent) {
-      // Update existing event title to show summary
-      const availableCount = availabilityData.filter(a => 
-        a.date === availability.date && a.isAvailable
-      ).length;
-      const totalCount = availabilityData.filter(a => 
-        a.date === availability.date
-      ).length;
+    console.log(`Processing Event: ${event.eventTitle}`);
+    console.log(`Original startDate: ${event.startDate}`);
+    console.log(`Parsed startDate: ${eventStartDate.toDateString()}`);
+    console.log(`Tagged departments: ${JSON.stringify(event.taggedDepartments)}`);
+    console.log(`Current user department: ${currentUser?.department}`);
+    
+    // Check if this event has bookings for the current user's department
+    const hasBookingsForDepartment = event.taggedDepartments && 
+      event.taggedDepartments.includes(currentUser?.department);
+    
+    console.log(`Has bookings for department: ${hasBookingsForDepartment}`);
+    
+    if (hasBookingsForDepartment) {
+      // Create calendar events for each day the event spans
+      const currentStartDate = new Date(eventStartDate);
+      const currentEndDate = new Date(eventEndDate);
       
-      existingEvent.title = `${availableCount}/${totalCount} Available`;
-      existingEvent.type = availableCount === totalCount ? 'available' : 
-                          availableCount === 0 ? 'unavailable' : 'custom';
-    } else {
-      // Create new event
-      const dayAvailability = availabilityData.filter(a => a.date === availability.date);
-      const availableCount = dayAvailability.filter(a => a.isAvailable).length;
-      const totalCount = dayAvailability.length;
+      // Reset time to avoid timezone issues
+      currentStartDate.setHours(0, 0, 0, 0);
+      currentEndDate.setHours(0, 0, 0, 0);
       
-      events.push({
-        id: availability.date,
-        date: availability.date,
-        title: `${availableCount}/${totalCount} Available`,
-        type: availableCount === totalCount ? 'available' : 
-              availableCount === 0 ? 'unavailable' : 'custom',
-        notes: `${availableCount} of ${totalCount} resources available`
-      });
+      const currentDate = new Date(currentStartDate);
+      while (currentDate <= currentEndDate) {
+        const dateString = currentDate.getFullYear() + '-' + 
+                          String(currentDate.getMonth() + 1).padStart(2, '0') + '-' + 
+                          String(currentDate.getDate()).padStart(2, '0');
+        
+        if (!eventsByDate[dateString]) {
+          eventsByDate[dateString] = [];
+        }
+        
+        // Only add if not already in the array for this date
+        const alreadyExists = eventsByDate[dateString].some(e => e._id === event._id);
+        if (!alreadyExists) {
+          eventsByDate[dateString].push(event);
+          console.log(`Added event "${event.eventTitle}" to date ${dateString}`);
+        }
+        
+        // Move to next day
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
     }
+  });
+  
+  // Debug: Show what we have grouped
+  console.log('=== EVENTS GROUPED BY DATE ===');
+  Object.keys(eventsByDate).forEach(date => {
+    console.log(`Date ${date}: ${eventsByDate[date].length} events`);
+    eventsByDate[date].forEach((event, index) => {
+      console.log(`  ${index + 1}. ${event.eventTitle} (ID: ${event._id})`);
+    });
+  });
+  console.log('=== END GROUPING ===');
+  
+  // Now create separate calendar events for each event (to show vertically)
+  Object.keys(eventsByDate).forEach(dateString => {
+    const eventsForDate = eventsByDate[dateString];
     
-    return events;
-  }, [] as CalendarEvent[]);
+    console.log(`Creating ${eventsForDate.length} separate calendar events for ${dateString}:`);
+    
+    eventsForDate.forEach((event, index) => {
+      console.log(`  Creating event ${index + 1}: "${event.eventTitle}"`);
+      
+      calendarEvents.push({
+        id: `${event._id}-${dateString}`,
+        date: dateString,
+        title: event.eventTitle,
+        type: 'booking',
+        notes: `Event: ${event.eventTitle} | Requestor: ${event.requestor} | Location: ${event.location}`
+      });
+    });
+  });
+  
+  // Add availability data as secondary events (if no bookings exist for that date)
+  availabilityData.forEach((availability) => {
+    const existingBooking = calendarEvents.find(e => e.date === availability.date);
+    
+    if (!existingBooking) {
+      const existingAvailability = calendarEvents.find(e => e.date === availability.date && e.type !== 'booking');
+      
+      if (existingAvailability) {
+        // Update existing availability event
+        const dayAvailability = availabilityData.filter(a => a.date === availability.date);
+        const availableCount = dayAvailability.filter(a => a.isAvailable).length;
+        const totalCount = dayAvailability.length;
+        
+        existingAvailability.title = `${availableCount}/${totalCount} Available`;
+        existingAvailability.type = availableCount === totalCount ? 'available' : 
+                                   availableCount === 0 ? 'unavailable' : 'custom';
+      } else {
+        // Create new availability event
+        const dayAvailability = availabilityData.filter(a => a.date === availability.date);
+        const availableCount = dayAvailability.filter(a => a.isAvailable).length;
+        const totalCount = dayAvailability.length;
+        
+        calendarEvents.push({
+          id: availability.date,
+          date: availability.date,
+          title: `${availableCount}/${totalCount} Available`,
+          type: availableCount === totalCount ? 'available' : 
+                availableCount === 0 ? 'unavailable' : 'custom',
+          notes: `${availableCount} of ${totalCount} resources available`
+        });
+      }
+    }
+  });
 
   // Handle date selection
   const handleDateClick = (date: Date) => {
@@ -342,7 +454,7 @@ const MyCalendarPage: React.FC = () => {
               onDateClick={handleDateClick}
               showNavigation={true}
               showLegend={true}
-              cellHeight="min-h-[100px]"
+              cellHeight="min-h-[140px]"
             />
           )}
         </CardContent>

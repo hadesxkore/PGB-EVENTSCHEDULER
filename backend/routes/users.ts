@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import User, { IUser } from '../models/User.js';
 import { generateToken, authenticateToken, requireAdmin } from '../middleware/auth.js';
+import bcrypt from 'bcryptjs';
 
 const router = express.Router();
 
@@ -308,6 +309,105 @@ router.get('/me', authenticateToken, async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch user profile',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// PUT /api/users/:id - Update user information (Admin only)
+router.put('/:id', authenticateToken, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { username, email, status, password } = req.body;
+
+    // Validate required fields
+    if (!username || !email || !status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username, email, and status are required'
+      });
+    }
+
+    // Validate status
+    if (!['active', 'inactive'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status must be either "active" or "inactive"'
+      });
+    }
+
+    // Check if username or email already exists (excluding current user)
+    const existingUser = await User.findOne({
+      $and: [
+        { _id: { $ne: id } },
+        { $or: [{ email }, { username }] }
+      ]
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username or email already exists'
+      });
+    }
+
+    // Prepare update data
+    const updateData: any = {
+      username,
+      email,
+      status
+    };
+
+    // Add password if provided (hash it first)
+    if (password && password.trim()) {
+      const salt = await bcrypt.genSalt(12);
+      updateData.password = await bcrypt.hash(password, salt);
+      console.log('🔒 Password hashed for user update');
+    }
+
+    const user = await User.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    console.log(`✅ User updated successfully: ${user.username}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'User updated successfully',
+      data: user
+    });
+  } catch (error) {
+    console.error('Error updating user:', error);
+    
+    // Handle mongoose validation errors
+    if (error instanceof Error && error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        error: error.message
+      });
+    }
+
+    // Handle duplicate key errors
+    if (error instanceof Error && 'code' in error && error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username or email already exists'
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update user',
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
