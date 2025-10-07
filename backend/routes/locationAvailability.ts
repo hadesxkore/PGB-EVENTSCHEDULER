@@ -339,4 +339,63 @@ router.get('/calendar/:year/:month', authenticateToken, async (req: Request, res
   }
 });
 
+// Cleanup function to delete past location availability records
+export const cleanupPastLocationAvailabilities = async () => {
+  try {
+    // Get today's date in YYYY-MM-DD format
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    
+    console.log(`🧹 Starting cleanup of location availabilities before ${todayStr}`);
+    
+    // Delete all location availability records with dates before today
+    const result = await LocationAvailability.deleteMany({
+      date: { $lt: todayStr }
+    });
+    
+    console.log(`✅ Cleanup completed: Deleted ${result.deletedCount} past location availability records`);
+    
+    return {
+      success: true,
+      deletedCount: result.deletedCount,
+      message: `Deleted ${result.deletedCount} past location availability records`
+    };
+  } catch (error) {
+    console.error('❌ Error during location availability cleanup:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      message: 'Failed to cleanup past location availabilities'
+    };
+  }
+};
+
+// Manual cleanup endpoint (for testing or manual triggers)
+router.post('/cleanup-past', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const result = await cleanupPastLocationAvailabilities();
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message,
+        deletedCount: result.deletedCount
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: result.message,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('Error in manual cleanup endpoint:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to execute cleanup',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 export default router;

@@ -18,7 +18,8 @@ import {
   Building2,
   Save,
   Trash2,
-  Lock
+  Lock,
+  X
 } from 'lucide-react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Autoplay, Pagination } from 'swiper/modules';
@@ -55,6 +56,8 @@ const ManageLocationPage: React.FC = () => {
     status: 'available' as 'available' | 'unavailable'
   });
   const [isAutoPopulated, setIsAutoPopulated] = useState(false);
+  const [showCustomLocationInput, setShowCustomLocationInput] = useState(false);
+  const [customLocationName, setCustomLocationName] = useState('');
   const [locationsForDate, setLocationsForDate] = useState<Array<{
     locationName: string;
     capacity: string;
@@ -163,11 +166,30 @@ const ManageLocationPage: React.FC = () => {
       description: '',
       status: 'available'
     });
+    setShowCustomLocationInput(false);
+    setCustomLocationName('');
   };
 
   // Handle location name selection with auto-population
   const handleLocationNameSelect = (selectedLocationName: string) => {
     console.log('🏢 Location selected:', selectedLocationName);
+    
+    // Check if user selected "Add Custom Location"
+    if (selectedLocationName === 'Add Custom Location') {
+      setShowCustomLocationInput(true);
+      setFormData({
+        locationName: '',
+        capacity: '',
+        description: '',
+        status: 'available'
+      });
+      setIsAutoPopulated(false);
+      return;
+    }
+    
+    // Hide custom input if a predefined location is selected
+    setShowCustomLocationInput(false);
+    setCustomLocationName('');
     
     // Find the most recent data for this location from existing records
     const existingLocationData = locationAvailabilities
@@ -209,6 +231,116 @@ const ManageLocationPage: React.FC = () => {
       });
       setIsAutoPopulated(false); // Mark as manual input (editable)
     }
+  };
+
+  // Handle custom location name confirmation
+  const handleCustomLocationConfirm = () => {
+    if (!customLocationName.trim()) {
+      toast.error('Please enter a location name');
+      return;
+    }
+
+    // Check if custom location already exists for this date
+    const exists = locationsForDate.some(loc => 
+      loc.locationName.toLowerCase() === customLocationName.trim().toLowerCase()
+    );
+
+    if (exists) {
+      toast.error('Location already exists for this date');
+      return;
+    }
+
+    // Set the custom location name in form data
+    setFormData({
+      locationName: customLocationName.trim(),
+      capacity: '',
+      description: '',
+      status: 'available'
+    });
+    
+    // Hide custom input and clear it
+    setShowCustomLocationInput(false);
+    setCustomLocationName('');
+    
+    toast.success(`Custom location "${customLocationName.trim()}" ready to configure`);
+  };
+
+  // Handle selecting all available locations at once
+  const handleSelectAllLocations = async () => {
+    // Get all available locations (not already in the list)
+    const availableLocations = defaultLocationNames.filter(locationName => {
+      const isAlreadyInList = locationsForDate.some(loc => 
+        loc.locationName.toLowerCase() === locationName.toLowerCase()
+      );
+      return !isAlreadyInList;
+    });
+
+    if (availableLocations.length === 0) {
+      toast.info('All locations are already added for this date');
+      return;
+    }
+
+    // Create location objects with auto-populated data
+    const newLocations: Array<{
+      locationName: string;
+      capacity: string;
+      description: string;
+      status: 'available' | 'unavailable';
+    }> = [];
+    
+    for (const locationName of availableLocations) {
+      // Find the most recent data for this location from existing records
+      const existingLocationData = locationAvailabilities
+        .filter(loc => loc.locationName === locationName)
+        .sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime())
+        .find(loc => loc.capacity && loc.description);
+
+      if (existingLocationData) {
+        // Use existing data
+        newLocations.push({
+          locationName: locationName,
+          capacity: existingLocationData.capacity.toString(),
+          description: existingLocationData.description,
+          status: 'available' as 'available' | 'unavailable'
+        });
+      } else {
+        // Use default values - will need manual input
+        newLocations.push({
+          locationName: locationName,
+          capacity: '',
+          description: '',
+          status: 'available' as 'available' | 'unavailable'
+        });
+      }
+    }
+
+    // Add all locations to the list
+    setLocationsForDate(prev => [...prev, ...newLocations]);
+    
+    // Clear form data
+    setFormData({
+      locationName: '',
+      capacity: '',
+      description: '',
+      status: 'available'
+    });
+    setShowCustomLocationInput(false);
+    setCustomLocationName('');
+
+    // Show success message
+    const autoPopulatedCount = newLocations.filter(loc => loc.capacity && loc.description).length;
+    const manualCount = newLocations.length - autoPopulatedCount;
+    
+    let message = `Added ${newLocations.length} location(s) to list`;
+    if (autoPopulatedCount > 0 && manualCount > 0) {
+      message += ` (${autoPopulatedCount} auto-filled, ${manualCount} need manual input)`;
+    } else if (autoPopulatedCount > 0) {
+      message += ` (all auto-filled with existing data)`;
+    } else {
+      message += ` (all need manual capacity/description input)`;
+    }
+    
+    toast.success(message);
   };
 
   const handleAddLocation = () => {
@@ -341,6 +473,8 @@ const ManageLocationPage: React.FC = () => {
         description: '',
         status: 'available'
       });
+      setShowCustomLocationInput(false);
+      setCustomLocationName('');
       return;
     }
 
@@ -405,6 +539,8 @@ const ManageLocationPage: React.FC = () => {
           description: '',
           status: 'available'
         });
+        setShowCustomLocationInput(false);
+        setCustomLocationName('');
         console.log('Modal should be closed now');
       } else {
         const errorMessages = results
@@ -657,7 +793,7 @@ const ManageLocationPage: React.FC = () => {
                 <div className="space-y-2">
                   <Label htmlFor="locationName">Location Name *</Label>
                   <Select 
-                    value={formData.locationName} 
+                    value={showCustomLocationInput ? "Add Custom Location" : (defaultLocationNames.includes(formData.locationName) ? formData.locationName : "")} 
                     onValueChange={handleLocationNameSelect}
                   >
                     <SelectTrigger>
@@ -673,6 +809,25 @@ const ManageLocationPage: React.FC = () => {
                       } />
                     </SelectTrigger>
                     <SelectContent>
+                      {/* Add Custom Location Option */}
+                      <SelectItem value="Add Custom Location" className="text-blue-600 font-medium">
+                        <div className="flex items-center gap-2">
+                          <Plus className="w-4 h-4" />
+                          Add Custom Location
+                        </div>
+                      </SelectItem>
+                      
+                      {/* Separator if there are available locations */}
+                      {defaultLocationNames.filter(locationName => {
+                        const isAlreadyInList = locationsForDate.some(loc => 
+                          loc.locationName.toLowerCase() === locationName.toLowerCase()
+                        );
+                        return !isAlreadyInList;
+                      }).length > 0 && (
+                        <div className="border-t my-1"></div>
+                      )}
+                      
+                      {/* Default Location Options */}
                       {defaultLocationNames
                         .filter(locationName => {
                           // Hide locations that are already in the current list
@@ -686,18 +841,106 @@ const ManageLocationPage: React.FC = () => {
                             {locationName}
                           </SelectItem>
                         ))}
+                      
+                      {/* Show message if all default locations are added */}
                       {defaultLocationNames.filter(locationName => {
                         const isAlreadyInList = locationsForDate.some(loc => 
                           loc.locationName.toLowerCase() === locationName.toLowerCase()
                         );
                         return !isAlreadyInList;
                       }).length === 0 && (
-                        <div className="px-2 py-1 text-sm text-gray-500 italic">
-                          All locations have been added for this date
+                        <div className="px-2 py-1 text-sm text-gray-500 italic border-t pt-2">
+                          All default locations have been added for this date
                         </div>
                       )}
                     </SelectContent>
                   </Select>
+                  
+                  {/* Select All Button */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSelectAllLocations}
+                    disabled={defaultLocationNames.filter(locationName => {
+                      const isAlreadyInList = locationsForDate.some(loc => 
+                        loc.locationName.toLowerCase() === locationName.toLowerCase()
+                      );
+                      return !isAlreadyInList;
+                    }).length === 0}
+                    className="text-xs gap-1 h-8 mt-2"
+                    title={`Add all ${defaultLocationNames.filter(locationName => {
+                      const isAlreadyInList = locationsForDate.some(loc => 
+                        loc.locationName.toLowerCase() === locationName.toLowerCase()
+                      );
+                      return !isAlreadyInList;
+                    }).length} available locations`}
+                  >
+                    <Plus className="w-3 h-3" />
+                    Select All Available Locations ({defaultLocationNames.filter(locationName => {
+                      const isAlreadyInList = locationsForDate.some(loc => 
+                        loc.locationName.toLowerCase() === locationName.toLowerCase()
+                      );
+                      return !isAlreadyInList;
+                    }).length})
+                  </Button>
+                  
+                  {/* Show selected custom location */}
+                  {formData.locationName && !defaultLocationNames.includes(formData.locationName) && !showCustomLocationInput && (
+                    <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-lg">
+                      <div className="flex items-center gap-2 text-green-800">
+                        <Plus className="w-4 h-4" />
+                        <span className="text-sm font-medium">Custom Location Selected:</span>
+                        <span className="text-sm">{formData.locationName}</span>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Custom Location Input */}
+                  {showCustomLocationInput && (
+                    <div className="mt-3 p-3 border rounded-lg bg-blue-50">
+                      <Label htmlFor="customLocationName" className="text-sm font-medium text-blue-900">
+                        Enter Custom Location Name *
+                      </Label>
+                      <div className="flex gap-2 mt-2">
+                        <Input
+                          id="customLocationName"
+                          value={customLocationName}
+                          onChange={(e) => setCustomLocationName(e.target.value)}
+                          placeholder="e.g., New Conference Room, Outdoor Pavilion"
+                          className="flex-1"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              handleCustomLocationConfirm();
+                            }
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          onClick={handleCustomLocationConfirm}
+                          size="sm"
+                          className="bg-blue-600 hover:bg-blue-700"
+                          disabled={!customLocationName.trim()}
+                        >
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setShowCustomLocationInput(false);
+                            setCustomLocationName('');
+                          }}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                      <p className="text-xs text-blue-600 mt-1">
+                        Press Enter or click + to confirm the custom location name
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">
@@ -799,6 +1042,8 @@ const ManageLocationPage: React.FC = () => {
                   description: '',
                   status: 'available'
                 });
+                setShowCustomLocationInput(false);
+                setCustomLocationName('');
               }}
             >
               Cancel

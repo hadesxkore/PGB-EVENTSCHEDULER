@@ -17,9 +17,22 @@ router.get('/:department', authenticateToken, async (req, res) => {
         department,
         permissions: {
           myRequirements: false,
-          manageLocation: false
+          manageLocation: false,
+          myCalendar: false
         }
       } as any;
+    } else {
+      // Ensure backward compatibility - add myCalendar if it doesn't exist
+      if (permissions.permissions && typeof permissions.permissions.myCalendar === 'undefined') {
+        permissions.permissions.myCalendar = false;
+        // Save the updated permissions to database
+        await DepartmentPermissions.findOneAndUpdate(
+          { department },
+          { 
+            'permissions.myCalendar': false 
+          }
+        );
+      }
     }
     
     res.json({
@@ -71,8 +84,8 @@ router.put('/:department', authenticateToken, async (req, res) => {
     }
     
     // Validate permission fields
-    const { myRequirements, manageLocation } = permissions;
-    if (typeof myRequirements !== 'boolean' || typeof manageLocation !== 'boolean') {
+    const { myRequirements, manageLocation, myCalendar } = permissions;
+    if (typeof myRequirements !== 'boolean' || typeof manageLocation !== 'boolean' || typeof myCalendar !== 'boolean') {
       return res.status(400).json({
         success: false,
         message: 'Permission values must be boolean'
@@ -86,7 +99,8 @@ router.put('/:department', authenticateToken, async (req, res) => {
         department,
         permissions: {
           myRequirements,
-          manageLocation
+          manageLocation,
+          myCalendar
         },
         updatedBy: userId
       },
@@ -126,7 +140,8 @@ router.delete('/:department', authenticateToken, async (req, res) => {
         department,
         permissions: {
           myRequirements: true,
-          manageLocation: true
+          manageLocation: true,
+          myCalendar: true
         },
         updatedBy: userId
       },

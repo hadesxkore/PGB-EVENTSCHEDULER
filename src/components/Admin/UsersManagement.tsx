@@ -56,7 +56,8 @@ import {
   UserPlus,
   Settings,
   Package,
-  MapPin
+  MapPin,
+  CalendarDays
 } from 'lucide-react';
 
 interface User {
@@ -84,6 +85,7 @@ interface DepartmentPermissions {
   permissions: {
     myRequirements: boolean;
     manageLocation: boolean;
+    myCalendar: boolean;
   };
 }
 
@@ -120,7 +122,8 @@ const UsersManagement: React.FC = () => {
     department: '',
     permissions: {
       myRequirements: false,
-      manageLocation: false
+      manageLocation: false,
+      myCalendar: false
     }
   });
   const [newUser, setNewUser] = useState<NewUser>({
@@ -239,7 +242,8 @@ const UsersManagement: React.FC = () => {
         department,
         permissions: {
           myRequirements: false,
-          manageLocation: false
+          manageLocation: false,
+          myCalendar: false
         }
       });
     }
@@ -818,6 +822,32 @@ const UsersManagement: React.FC = () => {
                     permissions: {
                       ...prev.permissions,
                       manageLocation: e.target.checked
+                    }
+                  }))}
+                  className="w-4 h-4 text-red-600 bg-gray-100 border-gray-300 rounded focus:ring-red-500"
+                />
+              </div>
+            </div>
+
+            {/* My Calendar Permission */}
+            <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex items-center gap-3">
+                <CalendarDays className="w-5 h-5 text-purple-600" />
+                <div>
+                  <h4 className="font-medium">My Calendar</h4>
+                  <p className="text-sm text-gray-600">Allow users to access their personal calendar view</p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="myCalendar"
+                  checked={departmentPermissions.permissions.myCalendar}
+                  onChange={(e) => setDepartmentPermissions(prev => ({
+                    ...prev,
+                    permissions: {
+                      ...prev.permissions,
+                      myCalendar: e.target.checked
                     }
                   }))}
                   className="w-4 h-4 text-red-600 bg-gray-100 border-gray-300 rounded focus:ring-red-500"

@@ -10,6 +10,7 @@ import departmentRoutes from './routes/departments.js';
 import resourceAvailabilityRoutes from './routes/resourceAvailability.js';
 import locationAvailabilityRoutes from './routes/locationAvailability.js';
 import departmentPermissionsRoutes from './routes/departmentPermissions.js';
+import { startScheduler } from './services/scheduler.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -66,6 +67,9 @@ const connectDB = async () => {
     console.log('✅ MongoDB Atlas connected successfully!');
     console.log(`📊 Database: ${mongoose.connection.db?.databaseName}`);
     console.log(`🌐 Host: ${mongoose.connection.host}`);
+    
+    // Start the automated scheduler
+    startScheduler();
     
   } catch (error) {
     console.error('❌ MongoDB connection failed:', error);

@@ -34,7 +34,8 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [permissions, setPermissions] = useState({
     myRequirements: false,
-    manageLocation: false
+    manageLocation: false,
+    myCalendar: false
   });
   const navigate = useNavigate();
   const location = useLocation();
@@ -77,10 +78,14 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
       { icon: LayoutDashboard, label: 'Dashboard', href: '/users/dashboard' },
       { icon: CalendarPlus, label: 'Request Event', href: '/users/request-event' },
       { icon: Calendar, label: 'My Events', href: '/users/my-events' },
-      { icon: CalendarDays, label: 'My Calendar', href: '/users/my-calendar' },
     ];
 
     const conditionalItems = [];
+    
+    // Add My Calendar if permitted
+    if (permissions.myCalendar) {
+      conditionalItems.push({ icon: CalendarDays, label: 'My Calendar', href: '/users/my-calendar' });
+    }
     
     // Add My Requirements if permitted
     if (permissions.myRequirements) {
@@ -93,7 +98,6 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
     }
 
     const endItems = [
-      { icon: Calendar, label: 'All Events', href: '/users/all-events' },
       { icon: MessageSquare, label: 'Messages', href: '/users/messages' },
       { icon: Building2, label: 'Tagged Departments', href: '/users/tagged-departments' },
     ];

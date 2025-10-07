@@ -274,11 +274,13 @@ const RequestEventPage: React.FC = () => {
     );
   };
 
-  // Auto-check for conflicts when schedule changes
+  // Auto-check for venue conflicts when schedule changes in modal
   useEffect(() => {
     const checkConflicts = async () => {
       if (formData.startDate && formData.startTime && formData.endTime && formData.location && showScheduleModal) {
-        await fetchConflictingEvents(formData.startDate, formData.startTime, formData.endTime, formData.location);
+        // Use venue-specific conflict checking for the schedule modal
+        const venueConflicts = await fetchVenueConflicts(formData.startDate, formData.startTime, formData.endTime, formData.location);
+        setConflictingEvents(venueConflicts);
       }
     };
 
@@ -313,9 +315,9 @@ const RequestEventPage: React.FC = () => {
   };
 
   const handleScheduleSave = async () => {
-    // Check for conflicts before saving
+    // Check for venue conflicts before saving (location-specific)
     if (formData.startDate && formData.startTime && formData.endTime && formData.location) {
-      const conflicts = await fetchConflictingEvents(
+      const conflicts = await fetchVenueConflicts(
         formData.startDate, 
         formData.startTime, 
         formData.endTime, 
@@ -323,8 +325,13 @@ const RequestEventPage: React.FC = () => {
       );
       
       if (conflicts.length > 0) {
-        toast.error(`Time conflict detected! There are ${conflicts.length} existing event(s) at ${formData.location} during this time.`, {
-          duration: 5000,
+        const conflictDetails = conflicts.map((event: any) => 
+          `"${event.eventTitle}" (${new Date(event.startDate).toDateString()} ${formatTime(event.startTime)}-${formatTime(event.endTime)})`
+        ).join(', ');
+        
+        toast.error(`Venue conflict detected! ${formData.location} is already booked during ${formData.startDate?.toDateString()} ${formatTime(formData.startTime)}-${formatTime(formData.endTime)}`, {
+          description: `Conflicting events at this venue: ${conflictDetails}`,
+          duration: 8000,
         });
         return; // Don't close modal if there are conflicts
       }
@@ -457,19 +464,36 @@ const RequestEventPage: React.FC = () => {
       return;
     }
 
-    // Check for quantity over-requests
-    const overRequests = selectedReqs.filter(req => 
-      req.type === 'physical' && 
-      req.quantity && 
-      req.totalQuantity && 
-      req.quantity > req.totalQuantity
-    );
+    // Check for quantity over-requests (considering conflicts)
+    const overRequests = selectedReqs.filter(req => {
+      if (req.type !== 'physical' || !req.quantity) return false;
+      
+      // If there are conflicts and we have schedule info, check against available quantity
+      if (conflictingEvents.length > 0 && formData.startDate && formData.startTime && 
+          hasRequirementConflict(req, selectedDepartment)) {
+        const availableQty = getAvailableQuantity(req, selectedDepartment);
+        return req.quantity > availableQty;
+      }
+      
+      // Otherwise check against total quantity
+      return req.totalQuantity && req.quantity > req.totalQuantity;
+    });
     
     if (overRequests.length > 0) {
-      const overRequestNames = overRequests.map(req => req.name).join(', ');
-      toast.warning(`Warning: Requested quantities exceed available for: ${overRequestNames}`, {
-        description: 'You can still save, but please consider adjusting quantities.'
+      const overRequestDetails = overRequests.map(req => {
+        const availableQty = conflictingEvents.length > 0 && formData.startDate && formData.startTime && 
+                            hasRequirementConflict(req, selectedDepartment)
+          ? getAvailableQuantity(req, selectedDepartment)
+          : req.totalQuantity || 0;
+        
+        return `${req.name} (requested: ${req.quantity}, available: ${availableQty})`;
       });
+      
+      toast.error(`Cannot save! Requested quantities exceed available resources:`, {
+        description: overRequestDetails.join(', '),
+        duration: 8000
+      });
+      return; // Prevent saving when quantities exceed available
     }
 
     // Add department to tagged list if not already added
@@ -539,7 +563,62 @@ const RequestEventPage: React.FC = () => {
     return start1Minutes < end2Minutes && start2Minutes < end1Minutes;
   };
 
-  // Fetch conflicting events for a specific date, time, and location
+  // Fetch conflicting events for venue booking (location-specific conflicts)
+  const fetchVenueConflicts = async (date: Date, startTime: string, endTime: string, location: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/events`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch events');
+      }
+      
+      const eventsData = await response.json();
+      const events = eventsData.data || [];
+      
+      // Filter events that conflict with the selected time AND location (for venue booking)
+      const conflicts = events.filter((event: any) => {
+        if (!event.startDate || !event.startTime || !event.endDate || !event.endTime) {
+          return false;
+        }
+        
+        // Only check conflicts for the SAME location (venue booking)
+        if (event.location !== location) {
+          return false;
+        }
+        
+        const eventStartDate = new Date(event.startDate);
+        
+        // Check if there's a time conflict at the same venue
+        const hasConflict = hasTimeConflict(
+          startTime, endTime,
+          event.startTime, event.endTime,
+          date, eventStartDate
+        );
+        
+        if (hasConflict) {
+          console.log(`🏢 Venue conflict detected with event: "${event.eventTitle}" at ${event.location}`);
+          console.log(`   📅 Event Date: ${new Date(event.startDate).toDateString()}`);
+          console.log(`   ⏰ Event Time: ${event.startTime} - ${event.endTime}`);
+          console.log(`   🆚 Requested Date: ${date.toDateString()}`);
+          console.log(`   ⏰ Requested Time: ${startTime} - ${endTime}`);
+        }
+        
+        return hasConflict;
+      });
+      
+      return conflicts;
+    } catch (error) {
+      console.error('Error fetching venue conflicts:', error);
+      return [];
+    }
+  };
+
+  // Fetch conflicting events for resource availability checking (across ALL locations)
   const fetchConflictingEvents = async (date: Date, startTime: string, endTime: string, location?: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/events`, {
@@ -556,25 +635,30 @@ const RequestEventPage: React.FC = () => {
       const eventsData = await response.json();
       const events = eventsData.data || [];
       
-      // Filter events that conflict with the selected time and location
+      // Filter events that conflict with the selected time
       const conflicts = events.filter((event: any) => {
         if (!event.startDate || !event.startTime || !event.endDate || !event.endTime) {
           return false;
         }
         
-        // If location is specified, only check conflicts for the same location
-        if (location && event.location && event.location !== location) {
-          return false;
-        }
-        
         const eventStartDate = new Date(event.startDate);
         
-        // Check if there's a time conflict
-        return hasTimeConflict(
+        // Check if there's a time conflict (regardless of location for resource conflicts)
+        const hasConflict = hasTimeConflict(
           startTime, endTime,
           event.startTime, event.endTime,
           date, eventStartDate
         );
+        
+        if (hasConflict) {
+          console.log(`⚠️ Time conflict detected with event: "${event.eventTitle}" at ${event.location}`);
+          console.log(`   📅 Event Date: ${new Date(event.startDate).toDateString()}`);
+          console.log(`   ⏰ Event Time: ${event.startTime} - ${event.endTime}`);
+          console.log(`   🆚 Requested Date: ${date.toDateString()}`);
+          console.log(`   ⏰ Requested Time: ${startTime} - ${endTime}`);
+        }
+        
+        return hasConflict;
       });
       
       setConflictingEvents(conflicts);
@@ -590,6 +674,9 @@ const RequestEventPage: React.FC = () => {
   const getAvailableQuantity = (requirement: any, departmentName: string) => {
     let usedQuantity = 0;
     
+    console.log(`🔍 Checking availability for "${requirement.name}" (Department: ${departmentName})`);
+    console.log(`📅 Conflicting events found: ${conflictingEvents.length}`);
+    
     conflictingEvents.forEach(event => {
       // Check ALL departments in the event, not just the current department
       if (event.taggedDepartments && event.departmentRequirements) {
@@ -601,7 +688,10 @@ const RequestEventPage: React.FC = () => {
             );
             if (matchingReq) {
               usedQuantity += matchingReq.quantity || 0;
-              console.log(`🔍 Found conflict: ${taggedDept} booked ${matchingReq.quantity} ${requirement.name} for event "${event.eventTitle}"`);
+              console.log(`🔍 Found resource conflict: ${taggedDept} booked ${matchingReq.quantity} ${requirement.name}`);
+              console.log(`   📋 Event: "${event.eventTitle}" at ${event.location}`);
+              console.log(`   📅 Date: ${new Date(event.startDate).toDateString()}`);
+              console.log(`   ⏰ Time: ${event.startTime} - ${event.endTime}`);
             }
           }
         });
@@ -1756,7 +1846,7 @@ const RequestEventPage: React.FC = () => {
                               This Item is Already Booked
                             </div>
                             <div className="text-xs text-orange-700">
-                              {requirement.name} is requested by {conflictingEvents.length} overlapping event(s) on {formData.startDate.toDateString()}
+                              {requirement.name} is requested by {conflictingEvents.length} overlapping event(s) on {formData.startDate.toDateString()} ({formatTime(formData.startTime)}-{formatTime(formData.endTime)})
                             </div>
                             <div className="text-xs text-orange-600 mt-1">
                               Quantity shown is remaining after existing bookings
