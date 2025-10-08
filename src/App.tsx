@@ -12,6 +12,7 @@ import AdminMainLayout from './components/Admin/AdminMainLayout'
 import AdminDashboard from './components/Admin/AdminDashboard'
 import AllEventsPage from './components/Admin/AllEventsPage'
 import UsersManagement from './components/Admin/UsersManagement'
+import UsersLogsPage from './components/Admin/UsersLogsPage'
 import DepartmentsManagement from './components/Admin/DepartmentsManagement'
 import './App.css'
 
@@ -62,7 +63,7 @@ function App() {
                 <Route path="all-events" element={<AllEventsPage />} />
                 <Route path="calendar" element={<div className="p-6"><h1 className="text-2xl font-bold">Calendar</h1><p>Coming soon...</p></div>} />
                 <Route path="users" element={<UsersManagement />} />
-                <Route path="users-logs" element={<div className="p-6"><h1 className="text-2xl font-bold">Users Logs</h1><p>Coming soon...</p></div>} />
+                <Route path="users-logs" element={<UsersLogsPage />} />
                 <Route path="departments" element={<DepartmentsManagement />} />
                 <Route path="reports" element={<div className="p-6"><h1 className="text-2xl font-bold">Reports</h1><p>Coming soon...</p></div>} />
                 <Route path="" element={<Navigate to="dashboard" replace />} />

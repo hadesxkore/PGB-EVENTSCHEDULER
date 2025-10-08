@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import CustomCalendar, { type CalendarEvent } from '@/components/ui/custom-calendar';
 import RequirementAvailabilityModal from './RequirementAvailabilityModal';
+import { useEventCount } from '@/hooks/useEventCount';
 import { 
   Calendar as CalendarIcon, 
   CheckCircle,
@@ -55,6 +56,13 @@ const MyCalendarPage: React.FC = () => {
   const [availabilityData, setAvailabilityData] = useState<ResourceAvailabilityData[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
+
+  // Use the event count hook for badge functionality
+  const { getEventCountForDate } = useEventCount({
+    userDepartment: currentUser?.department || currentUser?.departmentName,
+    filterByDepartment: true,
+    includeAllStatuses: false
+  });
 
   // Get current user and department info
   useEffect(() => {
@@ -455,6 +463,8 @@ const MyCalendarPage: React.FC = () => {
               showNavigation={true}
               showLegend={true}
               cellHeight="min-h-[140px]"
+              showEventCount={true}
+              getEventCountForDate={getEventCountForDate}
             />
           )}
         </CardContent>

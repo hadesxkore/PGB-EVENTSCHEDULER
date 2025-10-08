@@ -133,11 +133,13 @@ router.post('/', authenticateToken, upload.fields([
     
     console.log('🔍 POST /api/events - User ID:', userId);
     console.log('📋 User object:', (req as any).user);
+    console.log('🏢 Requestor Department from form:', req.body.requestorDepartment);
     
     // Parse form data
     const {
       eventTitle,
       requestor,
+      requestorDepartment,
       location,
       participants,
       vip,
@@ -160,6 +162,7 @@ router.post('/', authenticateToken, upload.fields([
     const requiredFields = {
       eventTitle,
       requestor,
+      requestorDepartment,
       location,
       participants,
       startDate,
@@ -233,6 +236,7 @@ router.post('/', authenticateToken, upload.fields([
     const newEvent = new Event({
       eventTitle,
       requestor,
+      requestorDepartment,
       location,
       participants: parseInt(participants),
       vip: vip ? parseInt(vip) : 0,

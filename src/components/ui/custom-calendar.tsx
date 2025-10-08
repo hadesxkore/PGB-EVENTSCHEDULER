@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import EventCountBadge from '@/components/ui/event-count-badge';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -32,6 +33,8 @@ interface CustomCalendarProps {
   initialDate?: Date;
   renderDateContent?: (date: Date, events: CalendarEvent[]) => React.ReactNode;
   renderEvent?: (event: CalendarEvent) => React.ReactNode;
+  showEventCount?: boolean;
+  getEventCountForDate?: (date: Date) => number;
 }
 
 const CustomCalendar: React.FC<CustomCalendarProps> = ({
@@ -44,7 +47,9 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
   cellHeight = 'min-h-[100px]',
   initialDate = new Date(),
   renderDateContent,
-  renderEvent
+  renderEvent,
+  showEventCount = false,
+  getEventCountForDate
 }) => {
   const [currentDate, setCurrentDate] = useState(initialDate);
 
@@ -144,6 +149,7 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
   const defaultRenderDateContent = (date: Date, dateEvents: CalendarEvent[]) => {
     const isToday = isSameDay(date, new Date());
     const isCurrentMonth = isSameMonth(date, currentDate);
+    const eventCount = showEventCount && getEventCountForDate ? getEventCountForDate(date) : 0;
 
     return (
       <>
@@ -156,8 +162,18 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
         </div>
 
         {/* Today Indicator */}
-        {isToday && (
+        {isToday && !showEventCount && (
           <div className="absolute top-2 right-2 w-2 h-2 bg-blue-600 rounded-full"></div>
+        )}
+
+        {/* Event Count Badge */}
+        {showEventCount && eventCount > 0 && (
+          <EventCountBadge 
+            count={eventCount}
+            variant="destructive"
+            size="sm"
+            position="top-right"
+          />
         )}
 
         {/* Events */}
@@ -175,7 +191,7 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
         )}
 
         {/* Add Note Indicator */}
-        {dateEvents.length === 0 && isCurrentMonth && (
+        {dateEvents.length === 0 && isCurrentMonth && !showEventCount && (
           <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
             <Plus className="w-3 h-3 text-gray-400" />
           </div>

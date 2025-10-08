@@ -20,6 +20,7 @@ export interface IEvent extends Document {
   // Basic Event Information
   eventTitle: string;
   requestor: string;
+  requestorDepartment: string; // Department of the person who submitted the request
   location: string;
   participants: number;
   vip?: number;
@@ -90,6 +91,12 @@ const EventSchema: Schema = new Schema({
     required: [true, 'Requestor is required'],
     trim: true,
     maxlength: [100, 'Requestor name cannot exceed 100 characters']
+  },
+  requestorDepartment: {
+    type: String,
+    required: [true, 'Requestor department is required'],
+    trim: true,
+    maxlength: [100, 'Department name cannot exceed 100 characters']
   },
   location: {
     type: String,

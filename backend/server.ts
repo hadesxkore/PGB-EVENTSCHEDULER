@@ -10,7 +10,7 @@ import departmentRoutes from './routes/departments.js';
 import resourceAvailabilityRoutes from './routes/resourceAvailability.js';
 import locationAvailabilityRoutes from './routes/locationAvailability.js';
 import departmentPermissionsRoutes from './routes/departmentPermissions.js';
-import { startScheduler } from './services/scheduler.js';
+import { startScheduler, runCleanupNow } from './services/scheduler.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -51,6 +51,27 @@ app.get('/api/health', (req, res) => {
     message: 'PGB Event Scheduler API is running!',
     timestamp: new Date().toISOString()
   });
+});
+
+// Manual cleanup trigger route (for testing)
+app.post('/api/cleanup-now', async (req, res) => {
+  try {
+    console.log('🧹 Manual cleanup triggered via API...');
+    const result = await runCleanupNow();
+    
+    res.json({
+      success: true,
+      message: 'Cleanup completed successfully',
+      result: result
+    });
+  } catch (error) {
+    console.error('❌ Manual cleanup failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Cleanup failed',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 // MongoDB Connection

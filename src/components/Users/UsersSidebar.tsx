@@ -1,18 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
 import axios from 'axios';
+import { Button } from '@/components/ui/button';
+import EventCountBadge from '@/components/ui/event-count-badge';
+import { useEventCount } from '@/hooks/useEventCount';
 import { 
-  LayoutDashboard, 
-  CalendarPlus, 
   Calendar, 
-  CalendarDays, 
-  MessageSquare, 
-  Building2,
+  CalendarDays,
   Package,
-  PanelLeft,
+  MapPin,
+  MessageSquare, 
+  Building2, 
   LogOut,
-  MapPin
+  LayoutDashboard,
+  CalendarPlus,
+  PanelLeft
 } from 'lucide-react';
 
 interface UsersSidebarProps {
@@ -25,12 +27,33 @@ interface UsersSidebarProps {
 }
 
 const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
-  // Use actual user data or fallback with proper null checks
-  const currentUser = {
+  // Get user data from localStorage for more accurate department info
+  const [currentUser, setCurrentUser] = useState({
     name: user?.name || "User",
     email: user?.email || "user@bataan.gov.ph",
     department: user?.department || "Department"
-  };
+  });
+
+  // Load user data from localStorage on mount
+  useEffect(() => {
+    const userData = localStorage.getItem('userData');
+    if (userData) {
+      try {
+        const parsedUser = JSON.parse(userData);
+        setCurrentUser({
+          name: parsedUser.name || user?.name || "User",
+          email: parsedUser.email || user?.email || "user@bataan.gov.ph",
+          department: parsedUser.department || parsedUser.departmentName || user?.department || "Department"
+        });
+        console.log('🔧 Sidebar User Data:', {
+          parsedUser,
+          finalDepartment: parsedUser.department || parsedUser.departmentName || user?.department || "Department"
+        });
+      } catch (error) {
+        console.error('Error parsing user data:', error);
+      }
+    }
+  }, [user]);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [permissions, setPermissions] = useState({
     myRequirements: false,
@@ -39,6 +62,13 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
   });
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Use event count hook for My Calendar badge
+  const { getTotalEventCount } = useEventCount({
+    userDepartment: currentUser.department,
+    filterByDepartment: true,
+    includeAllStatuses: false
+  });
 
   // API Configuration
   const API_BASE_URL = 'http://localhost:5000/api';
@@ -80,6 +110,11 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
       { icon: Calendar, label: 'My Events', href: '/users/my-events' },
     ];
 
+    const middleItems = [
+      { icon: MessageSquare, label: 'Messages', href: '/users/messages' },
+      { icon: Building2, label: 'Tagged Departments', href: '/users/tagged-departments' },
+    ];
+
     const conditionalItems = [];
     
     // Add My Calendar if permitted
@@ -97,12 +132,7 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
       conditionalItems.push({ icon: MapPin, label: 'Manage Location', href: '/users/manage-location' });
     }
 
-    const endItems = [
-      { icon: MessageSquare, label: 'Messages', href: '/users/messages' },
-      { icon: Building2, label: 'Tagged Departments', href: '/users/tagged-departments' },
-    ];
-
-    return [...baseItems, ...conditionalItems, ...endItems];
+    return [...baseItems, ...middleItems, ...conditionalItems];
   };
 
   const navigationItems = getNavigationItems();
@@ -155,30 +185,55 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
         {navigationItems.map((item) => {
           const Icon = item.icon;
           const isActive = location.pathname === item.href;
+          const isMyCalendar = item.label === 'My Calendar';
+          const totalEventCount = isMyCalendar ? getTotalEventCount() : 0;
+          
+          // Debug logging for sidebar badge
+          if (isMyCalendar) {
+            console.log('🔧 Sidebar Debug:', {
+              isMyCalendar,
+              totalEventCount,
+              currentUserDepartment: currentUser.department,
+              isCollapsed,
+              shouldShowBadge: totalEventCount > 0 && !isCollapsed
+            });
+          }
           
           return (
-            <Button
-              key={item.label}
-              variant="ghost"
-              onClick={() => handleNavigation(item.href)}
-              className={`w-full h-10 transition-all duration-200 ${
-                isActive 
-                  ? 'bg-blue-100 text-blue-700 border-r-2 border-blue-600'
-                  : 'text-gray-700 hover:bg-blue-50 hover:text-blue-700'
-              } ${
-                isCollapsed 
-                  ? 'justify-center px-2' 
-                  : 'justify-start gap-3 px-3'
-              }`}
-              title={isCollapsed ? item.label : undefined}
-            >
-              <Icon className="h-5 w-5 flex-shrink-0" />
-              <span className={`truncate transition-opacity duration-200 ${
-                isCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
-              }`}>
-                {item.label}
-              </span>
-            </Button>
+            <div key={item.label} className="relative">
+              <Button
+                variant="ghost"
+                onClick={() => handleNavigation(item.href)}
+                className={`w-full h-10 transition-all duration-200 ${
+                  isActive 
+                    ? 'bg-blue-100 text-blue-700 border-r-2 border-blue-600'
+                    : 'text-gray-700 hover:bg-blue-50 hover:text-blue-700'
+                } ${
+                  isCollapsed 
+                    ? 'justify-center px-2' 
+                    : 'justify-start gap-3 px-3'
+                }`}
+                title={isCollapsed ? item.label : undefined}
+              >
+                <Icon className="h-5 w-5 flex-shrink-0" />
+                <span className={`truncate transition-opacity duration-200 ${
+                  isCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
+                }`}>
+                  {item.label}
+                </span>
+              </Button>
+              
+              {/* Event Count Badge for My Calendar */}
+              {isMyCalendar && totalEventCount > 0 && !isCollapsed && (
+                <EventCountBadge 
+                  count={totalEventCount}
+                  variant="destructive"
+                  size="sm"
+                  position="top-right"
+                  className="absolute -top-1 -right-1"
+                />
+              )}
+            </div>
           );
         })}
       </nav>

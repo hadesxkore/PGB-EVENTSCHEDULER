@@ -955,151 +955,6 @@ const AllEventsPage: React.FC = () => {
                                       </div>
                                     )}
 
-                                    {/* Attachments */}
-                                    {selectedEvent.attachments && selectedEvent.attachments.length > 0 && (
-                                      <div>
-                                        <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                                          <FileText className="w-4 h-4" />
-                                          Attachments
-                                        </label>
-                                        <div className="mt-1 space-y-2">
-                                          {selectedEvent.attachments.map((attachment, index) => (
-                                            <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
-                                              <div className="flex items-center gap-2">
-                                                <FileText className="w-4 h-4 text-gray-600" />
-                                                <span className="text-sm font-medium">{attachment.originalName}</span>
-                                              </div>
-                                              <div className="flex items-center gap-2">
-                                                <Button
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="gap-1 h-8"
-                                                  onClick={() => window.open(`${API_BASE_URL}/events/attachment/${attachment.filename}`, '_blank')}
-                                                >
-                                                  <Eye className="w-3 h-3" />
-                                                  View
-                                                </Button>
-                                                <Button
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="gap-1 h-8"
-                                                  onClick={() => window.open(`${API_BASE_URL}/events/attachment/${attachment.filename}?download=true`, '_blank')}
-                                                >
-                                                  <Download className="w-3 h-3" />
-                                                  Download
-                                                </Button>
-                                              </div>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Government Files */}
-                                    {selectedEvent.govFiles && Object.keys(selectedEvent.govFiles).length > 0 && (
-                                      <div>
-                                        <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                                          <Building2 className="w-4 h-4" />
-                                          Government Files
-                                        </label>
-                                        <div className="mt-1 space-y-2">
-                                          {selectedEvent.govFiles.brieferTemplate && (
-                                            <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg border border-blue-200">
-                                              <div className="flex items-center gap-2">
-                                                <FileText className="w-4 h-4 text-blue-600" />
-                                                <div>
-                                                  <span className="text-sm font-medium">Briefer Template</span>
-                                                  <p className="text-xs text-gray-500">{selectedEvent.govFiles.brieferTemplate?.originalName}</p>
-                                                </div>
-                                              </div>
-                                              <div className="flex items-center gap-2">
-                                                <Button
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="gap-1 h-8"
-                                                  onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.brieferTemplate?.filename}`, '_blank')}
-                                                >
-                                                  <Eye className="w-3 h-3" />
-                                                  View
-                                                </Button>
-                                                <Button
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="gap-1 h-8"
-                                                  onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.brieferTemplate?.filename}?download=true`, '_blank')}
-                                                >
-                                                  <Download className="w-3 h-3" />
-                                                  Download
-                                                </Button>
-                                              </div>
-                                            </div>
-                                          )}
-                                          {selectedEvent.govFiles.availableForDL && (
-                                            <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg border border-green-200">
-                                              <div className="flex items-center gap-2">
-                                                <FileText className="w-4 h-4 text-green-600" />
-                                                <div>
-                                                  <span className="text-sm font-medium">Available for DL</span>
-                                                  <p className="text-xs text-gray-500">{selectedEvent.govFiles.availableForDL?.originalName}</p>
-                                                </div>
-                                              </div>
-                                              <div className="flex items-center gap-2">
-                                                <Button
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="gap-1 h-8"
-                                                  onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.availableForDL?.filename}`, '_blank')}
-                                                >
-                                                  <Eye className="w-3 h-3" />
-                                                  View
-                                                </Button>
-                                                <Button
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="gap-1 h-8"
-                                                  onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.availableForDL?.filename}?download=true`, '_blank')}
-                                                >
-                                                  <Download className="w-3 h-3" />
-                                                  Download
-                                                </Button>
-                                              </div>
-                                            </div>
-                                          )}
-                                          {selectedEvent.govFiles.programme && (
-                                            <div className="flex items-center justify-between p-3 bg-purple-50 rounded-lg border border-purple-200">
-                                              <div className="flex items-center gap-2">
-                                                <FileText className="w-4 h-4 text-purple-600" />
-                                                <div>
-                                                  <span className="text-sm font-medium">Programme</span>
-                                                  <p className="text-xs text-gray-500">{selectedEvent.govFiles.programme?.originalName}</p>
-                                                </div>
-                                              </div>
-                                              <div className="flex items-center gap-2">
-                                                <Button
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="gap-1 h-8"
-                                                  onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.programme?.filename}`, '_blank')}
-                                                >
-                                                  <Eye className="w-3 h-3" />
-                                                  View
-                                                </Button>
-                                                <Button
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="gap-1 h-8"
-                                                  onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.programme?.filename}?download=true`, '_blank')}
-                                                >
-                                                  <Download className="w-3 h-3" />
-                                                  Download
-                                                </Button>
-                                              </div>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )}
-
                                     {/* View Description Button */}
                                     <div className="pt-4 border-t">
                                       <Button
@@ -1163,41 +1018,40 @@ const AllEventsPage: React.FC = () => {
                                         Event Attachments
                                       </h3>
                                       {selectedEvent.attachments && selectedEvent.attachments.length > 0 ? (
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-2">
                                           {selectedEvent.attachments.map((attachment: any, index: number) => (
-                                            <div key={index} className="border rounded-lg p-4 hover:bg-gray-50">
-                                              <div className="flex items-center justify-between">
-                                                <div className="flex-1">
-                                                  <p className="font-medium text-sm">{attachment.originalName}</p>
-                                                  <p className="text-xs text-gray-500">
+                                            <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                                              <div className="flex items-center gap-3">
+                                                <FileText className="w-4 h-4 text-muted-foreground" />
+                                                <div>
+                                                  <p className="text-sm font-medium">{attachment.originalName}</p>
+                                                  <p className="text-xs text-muted-foreground">
                                                     {attachment.mimetype} • {(attachment.size / 1024).toFixed(1)} KB
                                                   </p>
                                                 </div>
-                                                <div className="flex gap-2">
-                                                  <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="gap-1 h-8"
-                                                    onClick={() => window.open(`${API_BASE_URL}/events/attachment/${attachment.filename}`, '_blank')}
-                                                  >
-                                                    <Eye className="w-3 h-3" />
-                                                    View
-                                                  </Button>
-                                                  <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="gap-1 h-8"
-                                                    onClick={() => {
-                                                      const link = document.createElement('a');
-                                                      link.href = `${API_BASE_URL}/events/attachment/${attachment.filename}`;
-                                                      link.download = attachment.originalName;
-                                                      link.click();
-                                                    }}
-                                                  >
-                                                    <Download className="w-3 h-3" />
-                                                    Download
-                                                  </Button>
-                                                </div>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => window.open(`${API_BASE_URL}/events/attachment/${attachment.filename}`, '_blank')}
+                                                >
+                                                  <Eye className="w-4 h-4 mr-1" />
+                                                  View
+                                                </Button>
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => {
+                                                    const link = document.createElement('a');
+                                                    link.href = `${API_BASE_URL}/events/attachment/${attachment.filename}`;
+                                                    link.download = attachment.originalName;
+                                                    link.click();
+                                                  }}
+                                                >
+                                                  <Download className="w-4 h-4 mr-1" />
+                                                  Download
+                                                </Button>
                                               </div>
                                             </div>
                                           ))}
@@ -1214,120 +1068,117 @@ const AllEventsPage: React.FC = () => {
                                         Government Files
                                       </h3>
                                       {selectedEvent.govFiles && Object.keys(selectedEvent.govFiles).length > 0 ? (
-                                        <div className="space-y-4">
+                                        <div className="space-y-2">
                                           {/* Briefer Template */}
                                           {selectedEvent.govFiles.brieferTemplate && (
-                                            <div className="border rounded-lg p-4 hover:bg-gray-50">
-                                              <div className="flex items-center justify-between">
-                                                <div className="flex-1">
-                                                  <p className="font-medium text-sm">Briefer Template</p>
-                                                  <p className="text-xs text-gray-500">
+                                            <div className="flex items-center justify-between p-3 border rounded-lg">
+                                              <div className="flex items-center gap-3">
+                                                <FileText className="w-4 h-4 text-muted-foreground" />
+                                                <div>
+                                                  <p className="text-sm font-medium">Briefer Template</p>
+                                                  <p className="text-xs text-muted-foreground">
                                                     {selectedEvent.govFiles.brieferTemplate.originalName}
                                                   </p>
                                                 </div>
-                                                <div className="flex gap-2">
-                                                  <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="gap-1 h-8"
-                                                    onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.brieferTemplate?.filename}`, '_blank')}
-                                                  >
-                                                    <Eye className="w-3 h-3" />
-                                                    View
-                                                  </Button>
-                                                  <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="gap-1 h-8"
-                                                    onClick={() => {
-                                                      const link = document.createElement('a');
-                                                      link.href = `${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.brieferTemplate?.filename}`;
-                                                      link.download = selectedEvent.govFiles.brieferTemplate?.originalName || 'briefer-template';
-                                                      link.click();
-                                                    }}
-                                                  >
-                                                    <Download className="w-3 h-3" />
-                                                    Download
-                                                  </Button>
-                                                </div>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.brieferTemplate?.filename}`, '_blank')}
+                                                >
+                                                  <Eye className="w-4 h-4 mr-1" />
+                                                  View
+                                                </Button>
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => {
+                                                    const link = document.createElement('a');
+                                                    link.href = `${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.brieferTemplate?.filename}`;
+                                                    link.download = selectedEvent.govFiles.brieferTemplate?.originalName || 'briefer-template';
+                                                    link.click();
+                                                  }}
+                                                >
+                                                  <Download className="w-4 h-4 mr-1" />
+                                                  Download
+                                                </Button>
                                               </div>
                                             </div>
                                           )}
 
                                           {/* Available for DL */}
                                           {selectedEvent.govFiles.availableForDL && (
-                                            <div className="border rounded-lg p-4 hover:bg-gray-50">
-                                              <div className="flex items-center justify-between">
-                                                <div className="flex-1">
-                                                  <p className="font-medium text-sm">Available for DL</p>
-                                                  <p className="text-xs text-gray-500">
+                                            <div className="flex items-center justify-between p-3 border rounded-lg">
+                                              <div className="flex items-center gap-3">
+                                                <FileText className="w-4 h-4 text-muted-foreground" />
+                                                <div>
+                                                  <p className="text-sm font-medium">Available for DL</p>
+                                                  <p className="text-xs text-muted-foreground">
                                                     {selectedEvent.govFiles.availableForDL.originalName}
                                                   </p>
                                                 </div>
-                                                <div className="flex gap-2">
-                                                  <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="gap-1 h-8"
-                                                    onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.availableForDL?.filename}`, '_blank')}
-                                                  >
-                                                    <Eye className="w-3 h-3" />
-                                                    View
-                                                  </Button>
-                                                  <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="gap-1 h-8"
-                                                    onClick={() => {
-                                                      const link = document.createElement('a');
-                                                      link.href = `${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.availableForDL?.filename}`;
-                                                      link.download = selectedEvent.govFiles.availableForDL?.originalName || 'available-for-dl';
-                                                      link.click();
-                                                    }}
-                                                  >
-                                                    <Download className="w-3 h-3" />
-                                                    Download
-                                                  </Button>
-                                                </div>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.availableForDL?.filename}`, '_blank')}
+                                                >
+                                                  <Eye className="w-4 h-4 mr-1" />
+                                                  View
+                                                </Button>
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => {
+                                                    const link = document.createElement('a');
+                                                    link.href = `${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.availableForDL?.filename}`;
+                                                    link.download = selectedEvent.govFiles.availableForDL?.originalName || 'available-for-dl';
+                                                    link.click();
+                                                  }}
+                                                >
+                                                  <Download className="w-4 h-4 mr-1" />
+                                                  Download
+                                                </Button>
                                               </div>
                                             </div>
                                           )}
 
                                           {/* Programme */}
                                           {selectedEvent.govFiles.programme && (
-                                            <div className="border rounded-lg p-4 hover:bg-gray-50">
-                                              <div className="flex items-center justify-between">
-                                                <div className="flex-1">
-                                                  <p className="font-medium text-sm">Programme</p>
-                                                  <p className="text-xs text-gray-500">
+                                            <div className="flex items-center justify-between p-3 border rounded-lg">
+                                              <div className="flex items-center gap-3">
+                                                <FileText className="w-4 h-4 text-muted-foreground" />
+                                                <div>
+                                                  <p className="text-sm font-medium">Programme</p>
+                                                  <p className="text-xs text-muted-foreground">
                                                     {selectedEvent.govFiles.programme.originalName}
                                                   </p>
                                                 </div>
-                                                <div className="flex gap-2">
-                                                  <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="gap-1 h-8"
-                                                    onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.programme?.filename}`, '_blank')}
-                                                  >
-                                                    <Eye className="w-3 h-3" />
-                                                    View
-                                                  </Button>
-                                                  <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="gap-1 h-8"
-                                                    onClick={() => {
-                                                      const link = document.createElement('a');
-                                                      link.href = `${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.programme?.filename}`;
-                                                      link.download = selectedEvent.govFiles.programme?.originalName || 'programme';
-                                                      link.click();
-                                                    }}
-                                                  >
-                                                    <Download className="w-3 h-3" />
-                                                    Download
-                                                  </Button>
-                                                </div>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => window.open(`${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.programme?.filename}`, '_blank')}
+                                                >
+                                                  <Eye className="w-4 h-4 mr-1" />
+                                                  View
+                                                </Button>
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => {
+                                                    const link = document.createElement('a');
+                                                    link.href = `${API_BASE_URL}/events/govfile/${selectedEvent.govFiles.programme?.filename}`;
+                                                    link.download = selectedEvent.govFiles.programme?.originalName || 'programme';
+                                                    link.click();
+                                                  }}
+                                                >
+                                                  <Download className="w-4 h-4 mr-1" />
+                                                  Download
+                                                </Button>
                                               </div>
                                             </div>
                                           )}

@@ -44,7 +44,8 @@ import {
   Clock3,
   Download,
   Paperclip,
-  Edit
+  Edit,
+  AlertTriangle
 } from 'lucide-react';
 
 interface Event {
@@ -138,8 +139,132 @@ const MyEventsPage: React.FC = () => {
     endDate: '',
     endTime: ''
   });
+  const [availableDates, setAvailableDates] = useState<Date[]>([]);
   const [showCustomLocationInput, setShowCustomLocationInput] = useState(false);
   const [customLocation, setCustomLocation] = useState('');
+  const [conflictingEvents, setConflictingEvents] = useState<any[]>([]);
+
+  // Fetch available dates for selected location
+  const fetchAvailableDates = async (locationName: string) => {
+    try {
+      if (!locationName || locationName === 'Add Custom Location') {
+        setAvailableDates([]);
+        return;
+      }
+
+      const token = localStorage.getItem('authToken');
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      };
+
+      const response = await axios.get(`${API_BASE_URL}/location-availability`, { headers });
+      
+      if (response.data.success) {
+        // Filter availability records for the selected location
+        const locationAvailabilities = response.data.data.filter(
+          (item: any) => item.locationName === locationName && item.status === 'available'
+        );
+        
+        // Convert date strings to Date objects (timezone-safe)
+        const dates = locationAvailabilities.map((item: any) => {
+          // Parse date as local date to avoid timezone issues
+          const dateParts = item.date.split('-');
+          const year = parseInt(dateParts[0]);
+          const month = parseInt(dateParts[1]) - 1; // Month is 0-indexed
+          const day = parseInt(dateParts[2]);
+          return new Date(year, month, day);
+        });
+        setAvailableDates(dates);
+      } else {
+        setAvailableDates([]);
+      }
+    } catch (error) {
+      console.error('Error fetching available dates:', error);
+      setAvailableDates([]);
+    }
+  };
+
+  // Check if a date should be disabled (not available for the selected location)
+  const isDateDisabled = (date: Date) => {
+    if (availableDates.length === 0) {
+      return false; // If no available dates loaded yet, don't disable any dates
+    }
+    
+    // Use timezone-safe date comparison by comparing year, month, day only
+    const clickedYear = date.getFullYear();
+    const clickedMonth = date.getMonth();
+    const clickedDay = date.getDate();
+    
+    const matchFound = availableDates.some(availableDate => {
+      const availableYear = availableDate.getFullYear();
+      const availableMonth = availableDate.getMonth();
+      const availableDay = availableDate.getDate();
+      
+      return clickedYear === availableYear && 
+             clickedMonth === availableMonth && 
+             clickedDay === availableDay;
+    });
+    
+    return !matchFound;
+  };
+
+  // Fetch available dates when edit modal opens and location is already set
+  useEffect(() => {
+    if (showEditModal && editFormData.location && editFormData.location !== 'Add Custom Location') {
+      fetchAvailableDates(editFormData.location);
+    }
+  }, [showEditModal, editFormData.location]);
+
+  // Auto-check for venue conflicts when edit modal schedule changes
+  useEffect(() => {
+    const checkConflicts = async () => {
+      if (editFormData.startDate && editFormData.location && showEditModal) {
+        // Check conflicts for the entire day at this location to show booked time slots
+        const response = await fetch(`${API_BASE_URL}/events`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (response.ok) {
+          const eventsData = await response.json();
+          const events = eventsData.data || [];
+          
+          // Filter events that are on the same date and location, excluding the current event being edited
+          const conflicts = events.filter((event: any) => {
+            if (!event.startDate || !event.location || !editFormData.startDate) return false;
+            
+            // Exclude the current event being edited from conflicts
+            if (selectedEditEvent && event._id === selectedEditEvent._id) return false;
+            
+            // Only check conflicts for the SAME location
+            if (event.location !== editFormData.location) return false;
+            
+            const eventStartDate = new Date(event.startDate);
+            const selectedDate = new Date(editFormData.startDate);
+            
+            // Check if dates match (same day)
+            return eventStartDate.toDateString() === selectedDate.toDateString();
+          });
+          
+          setConflictingEvents(conflicts);
+          console.log(`🔍 Found ${conflicts.length} existing bookings for ${editFormData.location} on ${editFormData.startDate} (excluding current event)`);
+          conflicts.forEach((event: any) => {
+            console.log(`   📅 "${event.eventTitle}" - ${event.startTime} to ${event.endTime}`);
+          });
+        }
+      } else if (!showEditModal) {
+        // Clear conflicts when modal is closed
+        setConflictingEvents([]);
+      }
+    };
+
+    // Debounce the conflict checking to avoid too many API calls
+    const timeoutId = setTimeout(checkConflicts, 300);
+    return () => clearTimeout(timeoutId);
+  }, [editFormData.startDate, editFormData.location, showEditModal, selectedEditEvent]);
 
   // Fetch user's events
   const fetchMyEvents = async () => {
@@ -316,6 +441,66 @@ const MyEventsPage: React.FC = () => {
     return `${displayHour}:${minutes} ${ampm}`;
   };
 
+  // Generate time options with 30-minute intervals from 7:00 AM to 10:00 PM
+  const generateTimeOptions = () => {
+    const times = [];
+    for (let hour = 7; hour <= 22; hour++) {
+      for (let minute = 0; minute < 60; minute += 30) {
+        const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        const displayTime = formatTime(timeString);
+        times.push({ value: timeString, label: displayTime });
+      }
+    }
+    return times;
+  };
+
+  // Check if a specific time slot is booked for the selected location and date
+  const isTimeSlotBooked = (timeSlot: string) => {
+    if (!editFormData.startDate || !editFormData.location || conflictingEvents.length === 0) {
+      return false;
+    }
+
+    return conflictingEvents.some(event => {
+      if (event.location !== editFormData.location) return false;
+      
+      const eventStartTime = event.startTime;
+      const eventEndTime = event.endTime;
+      
+      // Convert times to minutes for easier comparison
+      const timeToMinutes = (time: string) => {
+        const [hours, minutes] = time.split(':').map(Number);
+        return hours * 60 + minutes;
+      };
+      
+      const slotMinutes = timeToMinutes(timeSlot);
+      const eventStartMinutes = timeToMinutes(eventStartTime);
+      const eventEndMinutes = timeToMinutes(eventEndTime);
+      
+      // For both start and end time: check if slot falls within existing event time range
+      // If existing event is 8:00-10:00, then 8:00, 8:30, 9:00, 9:30, 10:00 should all be blocked
+      // This prevents any overlap with existing bookings
+      return slotMinutes >= eventStartMinutes && slotMinutes <= eventEndMinutes;
+    });
+  };
+
+  // Get available end times based on selected start time
+  const getAvailableEndTimes = () => {
+    if (!editFormData.startTime) return generateTimeOptions();
+    
+    const timeToMinutes = (time: string) => {
+      const [hours, minutes] = time.split(':').map(Number);
+      return hours * 60 + minutes;
+    };
+    
+    const startMinutes = timeToMinutes(editFormData.startTime);
+    
+    return generateTimeOptions().filter(timeOption => {
+      const optionMinutes = timeToMinutes(timeOption.value);
+      // End time must be after start time
+      return optionMinutes > startMinutes;
+    });
+  };
+
   // Format MIME type helper - truncate long MIME types
   const formatMimeType = (mimetype: string) => {
     if (!mimetype) return '';
@@ -429,6 +614,55 @@ const MyEventsPage: React.FC = () => {
   // Handle save edited event
   const handleSaveEditedEvent = async () => {
     if (!selectedEditEvent) return;
+
+    // Check for time conflicts before saving
+    if (editFormData.startDate && editFormData.startTime && editFormData.endTime && editFormData.location) {
+      const hasConflict = conflictingEvents.some(event => {
+        if (event.location !== editFormData.location) return false;
+        
+        // Convert times to minutes for easier comparison
+        const timeToMinutes = (time: string) => {
+          const [hours, minutes] = time.split(':').map(Number);
+          return hours * 60 + minutes;
+        };
+        
+        const newStartMinutes = timeToMinutes(editFormData.startTime);
+        const newEndMinutes = timeToMinutes(editFormData.endTime);
+        const eventStartMinutes = timeToMinutes(event.startTime);
+        const eventEndMinutes = timeToMinutes(event.endTime);
+        
+        // Check if the new time range overlaps with existing event
+        return (newStartMinutes < eventEndMinutes && newEndMinutes > eventStartMinutes);
+      });
+
+      if (hasConflict) {
+        const conflictDetails = conflictingEvents
+          .filter(event => {
+            if (event.location !== editFormData.location) return false;
+            
+            const timeToMinutes = (time: string) => {
+              const [hours, minutes] = time.split(':').map(Number);
+              return hours * 60 + minutes;
+            };
+            
+            const newStartMinutes = timeToMinutes(editFormData.startTime);
+            const newEndMinutes = timeToMinutes(editFormData.endTime);
+            const eventStartMinutes = timeToMinutes(event.startTime);
+            const eventEndMinutes = timeToMinutes(event.endTime);
+            
+            return (newStartMinutes < eventEndMinutes && newEndMinutes > eventStartMinutes);
+          })
+          .map((event: any) => 
+            `"${event.eventTitle}" (${formatTime(event.startTime)}-${formatTime(event.endTime)})`
+          ).join(', ');
+        
+        toast.error(`Cannot save! Time conflict detected at ${editFormData.location}`, {
+          description: `Your selected time (${formatTime(editFormData.startTime)}-${formatTime(editFormData.endTime)}) conflicts with: ${conflictDetails}`,
+          duration: 8000,
+        });
+        return; // Don't save if there are conflicts
+      }
+    }
 
     try {
       const token = localStorage.getItem('authToken');
@@ -1409,6 +1643,26 @@ const MyEventsPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Location Availability Info */}
+              {editFormData.location && availableDates.length > 0 && (
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-xs text-blue-600 flex items-center gap-1">
+                    <CalendarIcon className="w-3 h-3" />
+                    Only dates when {editFormData.location} is available can be selected ({availableDates.length} available date{availableDates.length !== 1 ? 's' : ''})
+                  </p>
+                </div>
+              )}
+
+              {/* Conflict Warning */}
+              {editFormData.startDate && conflictingEvents.length > 0 && (
+                <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                  <p className="text-xs text-orange-600 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    {conflictingEvents.length} existing booking{conflictingEvents.length !== 1 ? 's' : ''} found for {editFormData.location} on {format(new Date(editFormData.startDate), "PPP")} - booked times are disabled
+                  </p>
+                </div>
+              )}
+
               {/* Location Section */}
               <div>
                 <Label className="text-sm font-medium text-gray-700">Location</Label>
@@ -1419,9 +1673,11 @@ const MyEventsPage: React.FC = () => {
                       if (value === 'Add Custom Location') {
                         setShowCustomLocationInput(true);
                         setCustomLocation('');
+                        setAvailableDates([]); // Clear available dates
                       } else {
                         setShowCustomLocationInput(false);
                         setEditFormData(prev => ({ ...prev, location: value }));
+                        fetchAvailableDates(value); // Fetch available dates for selected location
                       }
                     }}
                   >
@@ -1476,6 +1732,7 @@ const MyEventsPage: React.FC = () => {
                             setEditFormData(prev => ({ ...prev, location: customLocation.trim() }));
                             setShowCustomLocationInput(false);
                             setCustomLocation('');
+                            fetchAvailableDates(customLocation.trim()); // Fetch available dates for custom location
                           }
                         }}
                         className="px-3"
@@ -1512,9 +1769,15 @@ const MyEventsPage: React.FC = () => {
                           selected={editFormData.startDate ? new Date(editFormData.startDate) : undefined}
                           onSelect={(date) => {
                             if (date) {
-                              setEditFormData(prev => ({ ...prev, startDate: date.toISOString().split('T')[0] }));
+                              // Format date as YYYY-MM-DD without timezone conversion
+                              const year = date.getFullYear();
+                              const month = String(date.getMonth() + 1).padStart(2, '0');
+                              const day = String(date.getDate()).padStart(2, '0');
+                              const dateString = `${year}-${month}-${day}`;
+                              setEditFormData(prev => ({ ...prev, startDate: dateString }));
                             }
                           }}
+                          disabled={isDateDisabled}
                           initialFocus
                         />
                       </PopoverContent>
@@ -1524,12 +1787,50 @@ const MyEventsPage: React.FC = () => {
                   {/* Start Time */}
                   <div>
                     <Label className="text-xs text-gray-600">Time</Label>
-                    <Input
-                      type="time"
-                      value={editFormData.startTime}
-                      onChange={(e) => setEditFormData(prev => ({ ...prev, startTime: e.target.value }))}
-                      className="mt-1"
-                    />
+                    <Select 
+                      value={editFormData.startTime} 
+                      onValueChange={(value) => {
+                        setEditFormData(prev => ({ ...prev, startTime: value }));
+                        // Clear end time if it's now invalid
+                        if (editFormData.endTime) {
+                          const timeToMinutes = (time: string) => {
+                            const [hours, minutes] = time.split(':').map(Number);
+                            return hours * 60 + minutes;
+                          };
+                          if (timeToMinutes(value) >= timeToMinutes(editFormData.endTime)) {
+                            setEditFormData(prev => ({ ...prev, endTime: '' }));
+                          }
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Select start time" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-80">
+                        {generateTimeOptions().map((timeOption) => {
+                          const isBooked = isTimeSlotBooked(timeOption.value);
+                          return (
+                            <SelectItem 
+                              key={timeOption.value} 
+                              value={timeOption.value}
+                              disabled={isBooked}
+                              className={isBooked ? 'opacity-50 cursor-not-allowed' : ''}
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <span className={isBooked ? 'text-gray-400' : ''}>
+                                  {timeOption.label}
+                                </span>
+                                {isBooked && (
+                                  <Badge variant="destructive" className="ml-2 text-xs">
+                                    BOOKED
+                                  </Badge>
+                                )}
+                              </div>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
 
@@ -1556,9 +1857,15 @@ const MyEventsPage: React.FC = () => {
                           selected={editFormData.endDate ? new Date(editFormData.endDate) : undefined}
                           onSelect={(date) => {
                             if (date) {
-                              setEditFormData(prev => ({ ...prev, endDate: date.toISOString().split('T')[0] }));
+                              // Format date as YYYY-MM-DD without timezone conversion
+                              const year = date.getFullYear();
+                              const month = String(date.getMonth() + 1).padStart(2, '0');
+                              const day = String(date.getDate()).padStart(2, '0');
+                              const dateString = `${year}-${month}-${day}`;
+                              setEditFormData(prev => ({ ...prev, endDate: dateString }));
                             }
                           }}
+                          disabled={isDateDisabled}
                           initialFocus
                         />
                       </PopoverContent>
@@ -1568,12 +1875,39 @@ const MyEventsPage: React.FC = () => {
                   {/* End Time */}
                   <div>
                     <Label className="text-xs text-gray-600">Time</Label>
-                    <Input
-                      type="time"
-                      value={editFormData.endTime}
-                      onChange={(e) => setEditFormData(prev => ({ ...prev, endTime: e.target.value }))}
-                      className="mt-1"
-                    />
+                    <Select 
+                      value={editFormData.endTime} 
+                      onValueChange={(value) => setEditFormData(prev => ({ ...prev, endTime: value }))}
+                      disabled={!editFormData.startTime}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder={editFormData.startTime ? "Select end time" : "Select start time first"} />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-80">
+                        {getAvailableEndTimes().map((timeOption) => {
+                          const isBooked = isTimeSlotBooked(timeOption.value);
+                          return (
+                            <SelectItem 
+                              key={timeOption.value} 
+                              value={timeOption.value}
+                              disabled={isBooked}
+                              className={isBooked ? 'opacity-50 cursor-not-allowed' : ''}
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <span className={isBooked ? 'text-gray-400' : ''}>
+                                  {timeOption.label}
+                                </span>
+                                {isBooked && (
+                                  <Badge variant="destructive" className="ml-2 text-xs">
+                                    BOOKED
+                                  </Badge>
+                                )}
+                              </div>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               </div>

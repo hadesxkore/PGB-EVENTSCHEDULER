@@ -4,11 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import CustomCalendar, { type CalendarEvent } from '@/components/ui/custom-calendar';
+import { Calendar } from '@/components/ui/calendar';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { 
@@ -19,7 +21,9 @@ import {
   Save,
   Trash2,
   Lock,
-  X
+  X,
+  Filter,
+  ChevronDown
 } from 'lucide-react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Autoplay, Pagination } from 'swiper/modules';
@@ -58,6 +62,11 @@ const ManageLocationPage: React.FC = () => {
   const [isAutoPopulated, setIsAutoPopulated] = useState(false);
   const [showCustomLocationInput, setShowCustomLocationInput] = useState(false);
   const [customLocationName, setCustomLocationName] = useState('');
+  // Date filtering states
+  const [showDateFilter, setShowDateFilter] = useState(false);
+  const [selectedFilterDates, setSelectedFilterDates] = useState<string[]>([]);
+  const [filteredLocationData, setFilteredLocationData] = useState<LocationAvailability[]>([]);
+  
   const [locationsForDate, setLocationsForDate] = useState<Array<{
     locationName: string;
     capacity: string;
@@ -101,6 +110,32 @@ const ManageLocationPage: React.FC = () => {
       setLoading(false);
     }
   }, []);
+
+  // Filter location data based on selected dates
+  useEffect(() => {
+    if (selectedFilterDates.length === 0) {
+      // No filter applied, show all data
+      setFilteredLocationData(locationAvailabilities);
+    } else {
+      // Filter by selected dates
+      const filtered = locationAvailabilities.filter(location => 
+        selectedFilterDates.includes(location.date)
+      );
+      setFilteredLocationData(filtered);
+    }
+  }, [locationAvailabilities, selectedFilterDates]);
+
+  // Get unique dates from location data for filter options
+  const getAvailableDates = () => {
+    const dates = [...new Set(locationAvailabilities.map(loc => loc.date))];
+    return dates.sort();
+  };
+
+
+  // Clear all date filters
+  const clearDateFilters = () => {
+    setSelectedFilterDates([]);
+  };
 
   const loadLocationData = async () => {
     try {
@@ -605,14 +640,68 @@ const ManageLocationPage: React.FC = () => {
                 <Building2 className="w-5 h-5" />
                 Available Locations
               </CardTitle>
-              <Badge variant="secondary" className="gap-1">
-                <Plus className="w-3 h-3" />
-                Click dates to add locations
-              </Badge>
+              <div className="flex items-center gap-2">
+                {selectedFilterDates.length > 0 && (
+                  <Badge variant="outline" className="text-xs">
+                    {selectedFilterDates.length} date{selectedFilterDates.length !== 1 ? 's' : ''} filtered
+                  </Badge>
+                )}
+                <Popover open={showDateFilter} onOpenChange={setShowDateFilter}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                    >
+                      <Filter className="w-4 h-4" />
+                      Filter by Date
+                      <ChevronDown className={`w-4 h-4 transition-transform ${showDateFilter ? 'rotate-180' : ''}`} />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-72 p-2" align="end">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-medium text-gray-700">Filter dates</h4>
+                        {selectedFilterDates.length > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={clearDateFilters}
+                            className="text-xs text-gray-500 hover:text-gray-700 h-5 px-1"
+                          >
+                            Clear ({selectedFilterDates.length})
+                          </Button>
+                        )}
+                      </div>
+                      <Calendar
+                        mode="multiple"
+                        selected={selectedFilterDates.map(dateStr => new Date(dateStr))}
+                        onSelect={(dates) => {
+                          if (dates) {
+                            const dateStrings = Array.from(dates).map(date => format(date, 'yyyy-MM-dd'));
+                            setSelectedFilterDates(dateStrings);
+                          } else {
+                            setSelectedFilterDates([]);
+                          }
+                        }}
+                        disabled={(date) => {
+                          const dateString = format(date, 'yyyy-MM-dd');
+                          const availableDates = getAvailableDates();
+                          return !availableDates.includes(dateString);
+                        }}
+                        className="rounded-md border text-xs scale-90"
+                      />
+                      {getAvailableDates().length === 0 && (
+                        <p className="text-xs text-gray-500 text-center">No dates available</p>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
-            {locationAvailabilities.length === 0 ? (
+            {filteredLocationData.length === 0 ? (
               <div className="text-center py-6">
                 <MapPin className="w-12 h-12 text-gray-400 mx-auto mb-3" />
                 <p className="text-sm text-gray-600 mb-2">No locations configured yet</p>
@@ -621,7 +710,7 @@ const ManageLocationPage: React.FC = () => {
             ) : (
               <div className="relative">
                 <Swiper
-                  key={locationAvailabilities.length}
+                  key={filteredLocationData.length}
                   modules={[Autoplay, Pagination]}
                   spaceBetween={16}
                   slidesPerView={1}
@@ -636,7 +725,7 @@ const ManageLocationPage: React.FC = () => {
                     stopOnLastSlide: false
                   }}
                   navigation={false}
-                  pagination={{ clickable: true }}
+                  pagination={false}
                   breakpoints={{
                     640: {
                       slidesPerView: 2,
@@ -650,7 +739,7 @@ const ManageLocationPage: React.FC = () => {
                   }}
                   className="location-swiper"
                 >
-                  {locationAvailabilities.map((location) => (
+                  {filteredLocationData.map((location) => (
                     <SwiperSlide key={location._id}>
                       <div className="p-4 border rounded-lg hover:bg-gray-50 transition-colors h-full">
                         <div className="flex items-center justify-between mb-3">
