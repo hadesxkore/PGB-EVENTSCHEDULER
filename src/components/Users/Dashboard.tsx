@@ -86,51 +86,80 @@ const Dashboard: React.FC = () => {
   };
 
   // Helper function to generate notification message
-  const generateNotificationMessage = (event: Event): string => {
+  const generateNotificationMessage = (event: Event, isUserEvent: boolean): string => {
     const daysUntil = getDaysUntilEvent(event.startDate);
     const formattedTime = formatTime(event.startTime);
+    const eventPrefix = isUserEvent ? "Your event" : "Event";
+    const departmentInfo = isUserEvent ? "" : ` (${event.requestorDepartment || 'Unknown Dept'})`;
     
     if (daysUntil === 1) {
-      return `Your event "${event.eventTitle}" is tomorrow at ${formattedTime}`;
+      return `${eventPrefix} "${event.eventTitle}"${departmentInfo} is tomorrow at ${formattedTime}`;
     } else if (daysUntil === 2) {
-      return `Your event "${event.eventTitle}" is coming in 2 days at ${formattedTime}`;
+      return `${eventPrefix} "${event.eventTitle}"${departmentInfo} is coming in 2 days at ${formattedTime}`;
     } else if (daysUntil > 0 && daysUntil <= 7) {
-      return `Your event "${event.eventTitle}" is coming in ${daysUntil} days at ${formattedTime}`;
+      return `${eventPrefix} "${event.eventTitle}"${departmentInfo} is coming in ${daysUntil} days at ${formattedTime}`;
     }
-    return `Your event "${event.eventTitle}" is scheduled for ${event.startDate} at ${formattedTime}`;
+    return `${eventPrefix} "${event.eventTitle}"${departmentInfo} is scheduled for ${event.startDate} at ${formattedTime}`;
   };
 
   // Generate notifications from upcoming events
   const generateUpcomingEventNotifications = (events: Event[]): Notification[] => {
     const currentUser = JSON.parse(localStorage.getItem('userData') || '{}');
     const userDepartment = currentUser.department || currentUser.departmentName || '';
+    const userName = currentUser.name || '';
+    
+    console.log(`🔔 Filtering notifications for user: ${userName}, department: ${userDepartment}`);
     
     return events
       .filter(event => {
         const daysUntil = getDaysUntilEvent(event.startDate);
-        // Show notifications for events happening in the next 7 days
-        return daysUntil >= 0 && daysUntil <= 7 && 
-               (event.requestor === currentUser.name || 
-                event.requestorDepartment === userDepartment ||
-                event.taggedDepartments?.includes(userDepartment));
+        const isUpcoming = daysUntil >= 0 && daysUntil <= 7;
+        
+        if (!isUpcoming) return false;
+        
+        // Only show notifications for:
+        // 1. Events created by the current user
+        // 2. Events where the user's department is specifically tagged
+        const isUserEvent = event.requestor === userName;
+        const isTaggedForUserDepartment = event.taggedDepartments?.includes(userDepartment);
+        
+        const shouldShow = isUserEvent || isTaggedForUserDepartment;
+        
+        console.log(`📅 Event "${event.eventTitle}":`, {
+          requestor: event.requestor,
+          requestorDepartment: event.requestorDepartment,
+          taggedDepartments: event.taggedDepartments,
+          isUserEvent,
+          isTaggedForUserDepartment,
+          shouldShow
+        });
+        
+        return shouldShow;
       })
-      .map(event => ({
-        id: `upcoming-${event._id}`,
-        title: "Upcoming Event",
-        message: generateNotificationMessage(event),
-        type: "upcoming",
-        category: "upcoming",
-        time: getDaysUntilEvent(event.startDate) === 1 ? "Tomorrow" : 
-              getDaysUntilEvent(event.startDate) === 2 ? "In 2 days" :
-              `In ${getDaysUntilEvent(event.startDate)} days`,
-        read: false,
-        icon: AlertCircle,
-        iconColor: getDaysUntilEvent(event.startDate) === 1 ? "text-red-600" : "text-orange-600",
-        eventId: event._id
-      }));
+      .map(event => {
+        const currentUser = JSON.parse(localStorage.getItem('userData') || '{}');
+        const userName = currentUser.name || '';
+        const isUserEvent = event.requestor === userName;
+        
+        return {
+          id: `upcoming-${event._id}`,
+          title: isUserEvent ? "Your Upcoming Event" : "Tagged Event",
+          message: generateNotificationMessage(event, isUserEvent),
+          type: "upcoming",
+          category: isUserEvent ? "upcoming" : "tagged",
+          time: getDaysUntilEvent(event.startDate) === 1 ? "Tomorrow" : 
+                getDaysUntilEvent(event.startDate) === 2 ? "In 2 days" :
+                `In ${getDaysUntilEvent(event.startDate)} days`,
+          read: false,
+          icon: AlertCircle,
+          iconColor: getDaysUntilEvent(event.startDate) === 1 ? "text-red-600" : "text-orange-600",
+          eventId: event._id,
+          eventDate: event.startDate
+        };
+      });
   };
 
-  // Fetch user's events and generate notifications
+  // Fetch events and generate notifications
   const fetchEventsAndNotifications = async () => {
     try {
       setLoading(true);
