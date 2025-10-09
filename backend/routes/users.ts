@@ -288,6 +288,41 @@ router.get('/', authenticateToken, requireAdmin, async (req: Request, res: Respo
   }
 });
 
+// GET /api/users/department/:departmentName - Get users from specific department (authenticated users only)
+router.get('/department/:departmentName', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const { departmentName } = req.params;
+    
+    if (!departmentName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Department name is required'
+      });
+    }
+
+    // Find users in the specified department (excluding passwords)
+    const users = await User.find({ 
+      department: departmentName,
+      status: 'active' // Only return active users
+    })
+    .select('-password')
+    .sort({ username: 1 });
+
+    res.status(200).json({
+      success: true,
+      data: users,
+      message: `Found ${users.length} users in ${departmentName} department`
+    });
+  } catch (error) {
+    console.error('Error fetching department users:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch department users',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // GET /api/users/me - Get current user profile
 router.get('/me', authenticateToken, async (req: Request, res: Response) => {
   try {

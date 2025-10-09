@@ -4,12 +4,15 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 import eventRoutes from './routes/events.js';
 import userRoutes from './routes/users.js';
 import departmentRoutes from './routes/departments.js';
 import resourceAvailabilityRoutes from './routes/resourceAvailability.js';
 import locationAvailabilityRoutes from './routes/locationAvailability.js';
 import departmentPermissionsRoutes from './routes/departmentPermissions.js';
+import messageRoutes from './routes/messages.js';
 import { startScheduler, runCleanupNow } from './services/scheduler.js';
 
 // ES module __dirname equivalent
@@ -25,6 +28,14 @@ console.log('📋 Environment variables loaded:', Object.keys(process.env).filte
 ));
 
 const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: "http://localhost:5173", // Vite dev server
+    methods: ["GET", "POST"]
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI;
 
@@ -36,6 +47,36 @@ app.use(express.urlencoded({ extended: true }));
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+// Make io available to routes
+app.set('io', io);
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log('🔌 User connected:', socket.id);
+
+  // Join user to their personal room (for receiving messages)
+  socket.on('join-user-room', (userId) => {
+    socket.join(`user-${userId}`);
+    console.log(`👤 User ${userId} joined their room`);
+  });
+
+  // Join conversation room
+  socket.on('join-conversation', (conversationId) => {
+    socket.join(`conversation-${conversationId}`);
+    console.log(`💬 User joined conversation: ${conversationId}`);
+  });
+
+  // Leave conversation room
+  socket.on('leave-conversation', (conversationId) => {
+    socket.leave(`conversation-${conversationId}`);
+    console.log(`👋 User left conversation: ${conversationId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('🔌 User disconnected:', socket.id);
+  });
+});
+
 // Routes
 app.use('/api/events', eventRoutes);
 app.use('/api/users', userRoutes);
@@ -43,6 +84,7 @@ app.use('/api/departments', departmentRoutes);
 app.use('/api/resource-availability', resourceAvailabilityRoutes);
 app.use('/api/location-availability', locationAvailabilityRoutes);
 app.use('/api/department-permissions', departmentPermissionsRoutes);
+app.use('/api/messages', messageRoutes);
 
 // Health check route
 app.get('/api/health', (req, res) => {
@@ -103,12 +145,14 @@ const startServer = async () => {
   try {
     await connectDB();
     
-    app.listen(PORT, () => {
+    httpServer.listen(PORT, () => {
       console.log('🚀 PGB Event Scheduler Backend Server Started!');
       console.log(`📡 Server running on: http://localhost:${PORT}`);
+      console.log(`🔌 Socket.IO enabled for real-time messaging`);
       console.log(`🏥 Health check: http://localhost:${PORT}/api/health`);
       console.log(`📅 Events API: http://localhost:${PORT}/api/events`);
       console.log(`👥 Users API: http://localhost:${PORT}/api/users`);
+      console.log(`💬 Messages API: http://localhost:${PORT}/api/messages`);
       console.log(`🏢 Departments API: http://localhost:${PORT}/api/departments`);
       console.log(`📦 Resource Availability API: http://localhost:${PORT}/api/resource-availability`);
       console.log(`🗺️ Location Availability API: http://localhost:${PORT}/api/location-availability`);

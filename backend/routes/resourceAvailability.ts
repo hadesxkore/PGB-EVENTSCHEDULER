@@ -232,6 +232,56 @@ router.delete('/availability/:departmentId/:requirementId/:date', authenticateTo
   }
 });
 
+// Get all dates with availability for a department
+router.get('/department/:departmentId/all-dates', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const { departmentId } = req.params;
+    
+    // Get all unique dates that have availability records for this department
+    const availabilityRecords = await ResourceAvailability.find({ 
+      departmentId,
+      isAvailable: true // Only get available dates
+    })
+    .select('date requirementText quantity maxCapacity notes')
+    .sort({ date: 1 });
+
+    // Group by date and aggregate the data
+    const dateMap = new Map();
+    
+    availabilityRecords.forEach(record => {
+      const dateStr = record.date;
+      
+      if (!dateMap.has(dateStr)) {
+        dateMap.set(dateStr, {
+          date: dateStr,
+          availableCount: 0,
+          resources: []
+        });
+      }
+      
+      const dateEntry = dateMap.get(dateStr);
+      dateEntry.availableCount += 1;
+      dateEntry.resources.push({
+        name: record.requirementText,
+        quantity: record.quantity,
+        maxCapacity: record.maxCapacity,
+        notes: record.notes
+      });
+    });
+
+    // Convert map to array and sort by date
+    const result = Array.from(dateMap.values()).sort((a, b) => 
+      new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+
+    console.log(`📅 Found ${result.length} dates with availability for department ${departmentId}`);
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching all dates with availability:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get availability summary for a department
 router.get('/department/:departmentId/summary', authenticateToken, async (req: Request, res: Response) => {
   try {

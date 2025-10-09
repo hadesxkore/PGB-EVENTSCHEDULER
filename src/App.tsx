@@ -8,6 +8,7 @@ import MyEventsPage from './components/Users/MyEventsPage'
 import MyCalendarPage from './components/Users/MyCalendarPage'
 import MyRequirementsPage from './components/Users/MyRequirementsPage'
 import ManageLocationPage from './components/Users/ManageLocationPage'
+import MessagesPage from './components/Users/MessagesPage'
 import AdminMainLayout from './components/Admin/AdminMainLayout'
 import AdminDashboard from './components/Admin/AdminDashboard'
 import AllEventsPage from './components/Admin/AllEventsPage'
@@ -48,7 +49,7 @@ function App() {
                 <Route path="manage-location" element={<ManageLocationPage />} />
                 <Route path="calendar" element={<div className="p-6"><h1 className="text-2xl font-bold">Calendar</h1><p>Coming soon...</p></div>} />
                 <Route path="all-events" element={<div className="p-6"><h1 className="text-2xl font-bold">All Events</h1><p>Coming soon...</p></div>} />
-                <Route path="messages" element={<div className="p-6"><h1 className="text-2xl font-bold">Messages</h1><p>Coming soon...</p></div>} />
+                <Route path="messages" element={<MessagesPage />} />
                 <Route path="tagged-departments" element={<div className="p-6"><h1 className="text-2xl font-bold">Tagged Departments</h1><p>Coming soon...</p></div>} />
                 <Route path="" element={<Navigate to="dashboard" replace />} />
               </Routes>

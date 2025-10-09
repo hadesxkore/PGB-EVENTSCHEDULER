@@ -46,12 +46,12 @@ import {
   X,
   Upload,
   Plus,
-  Trash2,
   Info,
   Check,
   AlertTriangle,
   Package,
-  Settings
+  Settings,
+  Clock
 } from 'lucide-react';
 
 interface DepartmentRequirement {
@@ -64,6 +64,7 @@ interface DepartmentRequirement {
   totalQuantity?: number;
   isAvailable?: boolean;
   responsiblePerson?: string;
+  availabilityNotes?: string; // Notes from resource availability
 }
 
 interface DepartmentRequirements {
@@ -120,6 +121,8 @@ const RequestEventPage: React.FC = () => {
   const [selectedDepartment, setSelectedDepartment] = useState<string>('');
   const [customRequirement, setCustomRequirement] = useState<string>('');
   const [showCustomInput, setShowCustomInput] = useState(false);
+  const [showAvailableDatesModal, setShowAvailableDatesModal] = useState(false);
+  const [departmentAvailableDates, setDepartmentAvailableDates] = useState<any[]>([]);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState<string>('');
   const [showGovModal, setShowGovModal] = useState(false);
@@ -135,6 +138,7 @@ const RequestEventPage: React.FC = () => {
   // Dynamic data from database
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
+  // Remove unused state - we fetch availabilities directly when needed
   const [formData, setFormData] = useState<FormData>({
     eventTitle: '',
     requestor: '',
@@ -386,6 +390,31 @@ const RequestEventPage: React.FC = () => {
       }
     }
     
+    // Refresh resource availabilities for all tagged departments when schedule changes
+    if (formData.startDate && formData.taggedDepartments.length > 0) {
+      const updatedRequirements = { ...formData.departmentRequirements };
+      
+      for (const deptName of formData.taggedDepartments) {
+        const availabilities = await fetchResourceAvailabilities(deptName, formData.startDate);
+        const department = departments.find(dept => dept.name === deptName);
+        
+        if (department && department.requirements && updatedRequirements[deptName]) {
+          updatedRequirements[deptName] = updatedRequirements[deptName].map(req => {
+            const availability = availabilities.find((avail: any) => avail.requirementId === req.id);
+            return {
+              ...req,
+              totalQuantity: availability ? availability.quantity : department.requirements.find(deptReq => deptReq._id === req.id)?.totalQuantity || req.totalQuantity,
+              isAvailable: availability ? availability.isAvailable : department.requirements.find(deptReq => deptReq._id === req.id)?.isAvailable || req.isAvailable,
+              availabilityNotes: availability ? availability.notes : ''
+            };
+          });
+        }
+      }
+      
+      handleInputChange('departmentRequirements', updatedRequirements);
+      console.log('✅ Refreshed resource availabilities for all departments after schedule change');
+    }
+    
     setShowScheduleModal(false);
     setSelectedLocation('');
   };
@@ -404,7 +433,75 @@ const RequestEventPage: React.FC = () => {
     }));
   };
 
+  // Fetch resource availabilities for a specific department and date
+  const fetchResourceAvailabilities = async (departmentName: string, date: Date) => {
+    console.log(`\n🔍 === FETCH RESOURCE AVAILABILITIES ===`);
+    console.log(`📋 Department: ${departmentName}`);
+    console.log(`📅 Date: ${date}`);
+    
+    if (!date) {
+      console.log(`❌ No date provided`);
+      return [];
+    }
+    
+    try {
+      const token = localStorage.getItem('authToken');
+      const department = departments.find(dept => dept.name === departmentName);
+      
+      console.log(`🏢 Department found:`, department);
+      console.log(`🔑 Token exists: ${!!token}`);
+      
+      if (!department) {
+        console.log(`❌ Department not found in departments list`);
+        return [];
+      }
+      
+      // Fix timezone issue - use local date instead of UTC
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const dateStr = `${year}-${month}-${day}`;
+      
+      console.log(`📅 Original date: ${date}`);
+      console.log(`📅 Date string (timezone-safe): ${dateStr}`);
+      
+      const apiUrl = `${API_BASE_URL}/resource-availability/department/${department._id}/availability?startDate=${dateStr}&endDate=${dateStr}`;
+      console.log(`🌐 API URL: ${apiUrl}`);
+      
+      // Log API request details
+      console.log(`🔍 API Request: ${apiUrl}`);
+      
+      const response = await axios.get(apiUrl,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      console.log(`🔍 Resource availabilities for ${departmentName} on ${dateStr}:`, response.data);
+      console.log(`📊 Number of availability records found: ${response.data?.length || 0}`);
+      
+      // Log each availability record for debugging
+      if (response.data && response.data.length > 0) {
+        response.data.forEach((avail: any, index: number) => {
+          console.log(`   📦 Record ${index + 1}: ${avail.requirementText} - Quantity: ${avail.quantity}, ID: ${avail.requirementId}`);
+        });
+      }
+      
+      return response.data || [];
+    } catch (error) {
+      console.error('Error fetching resource availabilities:', error);
+      return [];
+    }
+  };
+
   const handleDepartmentToggle = async (departmentName: string) => {
+    try {
+      console.log(`🏢 Department selected: ${departmentName}`);
+      console.log(`📅 Schedule: ${formData.startDate} ${formData.startTime}-${formData.endTime} at ${formData.location}`);
+    
     // If department is being selected, open requirements modal
     if (!formData.taggedDepartments.includes(departmentName)) {
       setSelectedDepartment(departmentName);
@@ -415,40 +512,113 @@ const RequestEventPage: React.FC = () => {
         await fetchConflictingEvents(formData.startDate, formData.startTime, formData.endTime, formData.location);
       }
       
+      // Fetch resource availabilities for the selected date
+      let availabilities: any[] = [];
+      if (formData.startDate) {
+        console.log(`🚀 Fetching resource availabilities for ${departmentName} on ${formData.startDate}`);
+        availabilities = await fetchResourceAvailabilities(departmentName, formData.startDate);
+        console.log(`📦 Availabilities fetched:`, availabilities);
+      } else {
+        console.log(`❌ No startDate set - skipping availability fetch`);
+      }
+      
       setShowRequirementsModal(true);
       
       // Find the department and use its requirements
       const department = departments.find(dept => dept.name === departmentName);
-      if (department && department.requirements) {
-        // Convert database requirements to frontend format
-        const dbRequirements = department.requirements.map((req) => ({
-          id: req._id,
-          name: req.text,
-          selected: false,
-          notes: '',
-          type: req.type,
-          totalQuantity: req.totalQuantity,
-          isAvailable: req.isAvailable,
-          responsiblePerson: req.responsiblePerson
-        }));
+      if (department && department.requirements && availabilities.length > 0) {
+        // Only show requirements that have availability data for this specific date
+        const dbRequirements = department.requirements
+          .filter((req) => {
+            // Only include requirements that have availability data for this date
+            const availability = availabilities.find((avail: any) => 
+              avail.requirementId === req._id
+            );
+            return availability !== undefined;
+          })
+          .map((req) => {
+            // Find matching resource availability for this requirement and date
+            const availability = availabilities.find((avail: any) => 
+              avail.requirementId === req._id
+            );
+            
+            console.log(`📦 Processing requirement: ${req.text}`);
+            console.log(`   🔍 Availability found:`, availability);
+            console.log(`   📊 Availability quantity: ${availability?.quantity}`);
+            console.log(`   📊 Availability status: ${availability?.isAvailable}`);
+            
+            return {
+              id: req._id,
+              name: req.text,
+              selected: false,
+              notes: '',
+              type: req.type,
+              totalQuantity: availability.quantity, // Use actual availability quantity
+              isAvailable: availability.isAvailable,
+              responsiblePerson: req.responsiblePerson,
+              availabilityNotes: availability.notes || ''
+            };
+          });
 
         // Initialize requirements for this department
         const newRequirements = { ...formData.departmentRequirements };
         newRequirements[departmentName] = dbRequirements;
         handleInputChange('departmentRequirements', newRequirements);
         
-        console.log('✅ Department requirements loaded:', dbRequirements);
+        console.log('✅ Department requirements loaded with availability data:', dbRequirements);
+        console.log(`📊 Total requirements with availability: ${dbRequirements.length}`);
       } else {
-        // No requirements found, initialize with empty array
+        // No requirements found or no availability data for this date
         const newRequirements = { ...formData.departmentRequirements };
         newRequirements[departmentName] = [];
         handleInputChange('departmentRequirements', newRequirements);
+        
+        console.log(`❌ No availability data found for ${departmentName} on ${formData.startDate?.toDateString()}`);
       }
     } else {
       // If unchecking, remove from tagged departments
       const updatedDepartments = formData.taggedDepartments.filter(d => d !== departmentName);
       handleInputChange('taggedDepartments', updatedDepartments);
     }
+    } catch (error) {
+      console.error('🚨 ERROR in handleDepartmentToggle:', error);
+    }
+  };
+
+  // Fetch available dates for a department
+  const fetchAvailableDates = async (departmentName: string) => {
+    try {
+      const token = localStorage.getItem('authToken');
+      const department = departments.find(dept => dept.name === departmentName);
+      
+      if (!department) {
+        console.log(`❌ Department not found: ${departmentName}`);
+        return [];
+      }
+
+      const response = await axios.get(
+        `${API_BASE_URL}/resource-availability/department/${department._id}/all-dates`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      console.log(`📅 Available dates for ${departmentName}:`, response.data);
+      return response.data || [];
+    } catch (error) {
+      console.error('Error fetching available dates:', error);
+      return [];
+    }
+  };
+
+  const handleViewAvailableDates = async (departmentName: string) => {
+    console.log(`🔍 Fetching available dates for ${departmentName}`);
+    const dates = await fetchAvailableDates(departmentName);
+    setDepartmentAvailableDates(dates);
+    setShowAvailableDatesModal(true);
   };
 
   const handleRequirementToggle = (requirementId: string) => {
@@ -747,8 +917,13 @@ const RequestEventPage: React.FC = () => {
       }
     });
     
-    const availableQuantity = Math.max(0, (requirement.totalQuantity || 0) - usedQuantity);
-    console.log(`📊 ${requirement.name}: Total=${requirement.totalQuantity}, Used=${usedQuantity}, Available=${availableQuantity}`);
+    // Use the totalQuantity from the requirement object (which now contains the actual availability data)
+    // This should be the updated quantity from resourceavailabilities collection (200) not the default (100)
+    const totalAvailable = requirement.totalQuantity || 0;
+    const availableQuantity = Math.max(0, totalAvailable - usedQuantity);
+    
+    console.log(`📊 ${requirement.name}: Total=${totalAvailable}, Used=${usedQuantity}, Available=${availableQuantity}`);
+    console.log(`🔍 Requirement object totalQuantity: ${requirement.totalQuantity}`);
     
     return availableQuantity;
   };
@@ -1962,6 +2137,16 @@ const RequestEventPage: React.FC = () => {
                 </DialogTitle>
                 <DialogDescription className="text-sm text-muted-foreground">
                   Select requirements for this department
+                  {!formData.startDate && (
+                    <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800 text-xs">
+                      ⚠️ No date selected - showing default quantities. Set schedule first for accurate availability.
+                    </div>
+                  )}
+                  {formData.startDate && (
+                    <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-blue-800 text-xs">
+                      📅 Showing availability for {formData.startDate.toDateString()}
+                    </div>
+                  )}
                 </DialogDescription>
               </div>
               <Button
@@ -1995,22 +2180,27 @@ const RequestEventPage: React.FC = () => {
                 {formData.departmentRequirements[selectedDepartment]?.map((requirement) => (
                   <div
                     key={requirement.id}
-                    className={`p-3 border rounded-lg cursor-pointer transition-all ${
-                      requirement.selected 
-                        ? 'bg-blue-50 border-blue-200 shadow-sm' 
-                        : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    className={`p-3 border rounded-lg transition-all ${
+                      !requirement.isAvailable 
+                        ? 'bg-gray-50 border-gray-200 opacity-60 cursor-not-allowed'
+                        : requirement.selected 
+                          ? 'bg-blue-50 border-blue-200 shadow-sm cursor-pointer' 
+                          : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50 cursor-pointer'
                     }`}
-                    onClick={() => handleRequirementToggle(requirement.id)}
+                    onClick={() => requirement.isAvailable && handleRequirementToggle(requirement.id)}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-2">
                           <Checkbox
                             checked={requirement.selected}
-                            onChange={() => handleRequirementToggle(requirement.id)}
+                            disabled={!requirement.isAvailable}
+                            onChange={() => requirement.isAvailable && handleRequirementToggle(requirement.id)}
                             className="mt-0.5"
                           />
-                          <h5 className="font-medium text-sm text-gray-900">{requirement.name}</h5>
+                          <h5 className={`font-medium text-sm ${
+                            requirement.isAvailable ? 'text-gray-900' : 'text-gray-500'
+                          }`}>{requirement.name}</h5>
                           <Badge 
                             variant={requirement.type === 'physical' ? 'secondary' : 'outline'}
                             className="text-xs"
@@ -2075,10 +2265,52 @@ const RequestEventPage: React.FC = () => {
                             <span className="font-medium">Contact:</span> {requirement.responsiblePerson}
                           </div>
                         )}
+                        
+                        {requirement.availabilityNotes && (
+                          <div className="mt-2 p-2 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700">
+                            <span className="font-medium">Availability Notes:</span> {requirement.availabilityNotes}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
                 ))}
+                
+                {/* Empty State Message */}
+                {(!formData.departmentRequirements[selectedDepartment] || formData.departmentRequirements[selectedDepartment].length === 0) && (
+                  <div className="text-center py-8 px-4">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
+                        <Building2 className="w-8 h-8 text-gray-400" />
+                      </div>
+                      <div className="space-y-1 text-center">
+                        <h5 className="font-medium text-gray-900 text-center">No Requirements Available</h5>
+                        <p className="text-sm text-gray-600 max-w-md text-center mx-auto">
+                          The <strong>{selectedDepartment}</strong> department hasn't set up resource availability for{' '}
+                          {formData.startDate ? (
+                            <strong>{formData.startDate.toDateString()}</strong>
+                          ) : (
+                            <strong>the selected date</strong>
+                          )}.
+                        </p>
+                        <p className="text-xs text-gray-500 mt-2 text-center">
+                          The department needs to configure their equipment and service availability in the Calendar page first.
+                        </p>
+                        <div className="mt-4">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleViewAvailableDates(selectedDepartment)}
+                            className="gap-2"
+                          >
+                            <CalendarIcon className="w-4 h-4" />
+                            View Available Dates
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 
                 {/* Add Custom Requirement Button */}
                 <div 
@@ -2706,8 +2938,164 @@ const RequestEventPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Available Dates Modal */}
+      <Dialog open={showAvailableDatesModal} onOpenChange={setShowAvailableDatesModal}>
+        <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarIcon className="w-5 h-5 text-blue-600" />
+              Available Dates - {selectedDepartment}
+            </DialogTitle>
+            <DialogDescription>
+              Dates when {selectedDepartment} has configured resource availability
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            {departmentAvailableDates.length > 0 ? (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Found {departmentAvailableDates.length} date{departmentAvailableDates.length !== 1 ? 's' : ''} with available resources:
+                </p>
+                
+                <div className="grid gap-3 max-h-96 overflow-y-auto">
+                  {departmentAvailableDates.map((dateEntry: any, index: number) => (
+                    <div key={index} className="p-4 border rounded-lg bg-card">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-medium text-foreground">
+                          {format(new Date(dateEntry.date), 'EEEE, MMMM dd, yyyy')}
+                        </h4>
+                        <Badge variant="outline" className="text-xs">
+                          {dateEntry.availableCount || 0} resources
+                        </Badge>
+                      </div>
+                      
+                      {dateEntry.timeRange && (
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
+                          <Clock className="w-3 h-3" />
+                          <span>Time Range: {dateEntry.timeRange.start} - {dateEntry.timeRange.end}</span>
+                        </div>
+                      )}
+                      
+                      {dateEntry.resources && dateEntry.resources.length > 0 && (
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-muted-foreground">Available Resources:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {dateEntry.resources.slice(0, 3).map((resource: any, idx: number) => (
+                              <Badge key={idx} variant="secondary" className="text-xs">
+                                {resource.name}
+                              </Badge>
+                            ))}
+                            {dateEntry.resources.length > 3 && (
+                              <Badge variant="outline" className="text-xs">
+                                +{dateEntry.resources.length - 3} more
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="mt-3">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            // Set the date and close modal
+                            const selectedDateObj = new Date(dateEntry.date);
+                            handleInputChange('startDate', selectedDateObj);
+                            handleInputChange('endDate', selectedDateObj);
+                            setShowAvailableDatesModal(false);
+                            
+                            // Refresh requirements modal data with new date
+                            if (selectedDepartment && formData.startDate) {
+                              console.log(`🔄 Refreshing requirements data for ${selectedDepartment} on new date:`, selectedDateObj);
+                              
+                              // Fetch resource availabilities for the new date
+                              const availabilities = await fetchResourceAvailabilities(selectedDepartment, selectedDateObj);
+                              console.log(`📦 New availabilities fetched:`, availabilities);
+                              
+                              // Update the requirements modal with new availability data
+                              const department = departments.find(dept => dept.name === selectedDepartment);
+                              if (department && department.requirements && availabilities.length > 0) {
+                                const dbRequirements = department.requirements
+                                  .filter((req) => {
+                                    const availability = availabilities.find((avail: any) => 
+                                      avail.requirementId === req._id
+                                    );
+                                    return availability !== undefined;
+                                  })
+                                  .map((req) => {
+                                    const availability = availabilities.find((avail: any) => 
+                                      avail.requirementId === req._id
+                                    );
+                                    
+                                    return {
+                                      id: req._id,
+                                      name: req.text,
+                                      selected: false,
+                                      notes: '',
+                                      type: req.type,
+                                      totalQuantity: availability?.quantity || req.totalQuantity || 1,
+                                      quantity: availability?.quantity || req.totalQuantity || 1,
+                                      isAvailable: availability?.isAvailable || false,
+                                      responsiblePerson: req.responsiblePerson || '',
+                                      availabilityNotes: availability?.notes || ''
+                                    };
+                                  });
+                                
+                                // Update the form data with refreshed requirements
+                                const updatedRequirements = { ...formData.departmentRequirements };
+                                updatedRequirements[selectedDepartment] = dbRequirements;
+                                
+                                setFormData(prev => ({
+                                  ...prev,
+                                  departmentRequirements: updatedRequirements
+                                }));
+                                
+                                console.log(`✅ Requirements modal refreshed with ${dbRequirements.length} available requirements`);
+                              }
+                            }
+                            
+                            toast.success(`Date set to ${format(selectedDateObj, 'MMM dd, yyyy')} - Requirements updated!`);
+                          }}
+                          className="text-xs gap-1"
+                        >
+                          <CalendarIcon className="w-3 h-3" />
+                          Use This Date
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
+                    <CalendarIcon className="w-8 h-8 text-gray-400" />
+                  </div>
+                  <div className="space-y-1">
+                    <h5 className="font-medium text-gray-900">No Available Dates</h5>
+                    <p className="text-sm text-gray-600">
+                      {selectedDepartment} hasn't configured any resource availability yet.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end pt-4 border-t">
+            <Button variant="outline" onClick={() => setShowAvailableDatesModal(false)}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
 
 export default RequestEventPage;
+

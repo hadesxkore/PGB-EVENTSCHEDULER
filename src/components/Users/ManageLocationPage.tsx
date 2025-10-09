@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,6 +13,7 @@ import CustomCalendar, { type CalendarEvent } from '@/components/ui/custom-calen
 import { Calendar } from '@/components/ui/calendar';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import jsPDF from 'jspdf';
 import { 
   MapPin, 
   Calendar as CalendarIcon, 
@@ -23,7 +24,17 @@ import {
   Lock,
   X,
   Filter,
-  ChevronDown
+  ChevronDown,
+  Clock,
+  Users,
+  Eye,
+  FileText,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  FileDown,
+  Printer,
+  RefreshCw
 } from 'lucide-react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Autoplay, Pagination } from 'swiper/modules';
@@ -45,6 +56,20 @@ interface LocationAvailability {
   createdAt?: string;
   updatedAt?: string;
 }
+
+interface LocationBooking {
+  eventId: string;
+  eventTitle: string;
+  requestor: string;
+  requestorDepartment: string;
+  startTime: string;
+  endTime: string;
+  participants: number;
+  vip?: number;
+  vvip?: number;
+  status: string;
+}
+
 
 const ManageLocationPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
@@ -74,6 +99,13 @@ const ManageLocationPage: React.FC = () => {
     status: 'available' | 'unavailable';
   }>>([]);
   const [deletingIndex, setDeletingIndex] = useState<number | null>(null);
+  const [locationBookings, setLocationBookings] = useState<{[key: string]: LocationBooking[]}>({});
+  const [loadingBookings, setLoadingBookings] = useState<{[key: string]: boolean}>({});
+  const [allEvents, setAllEvents] = useState<any[]>([]);
+  const [eventCounts, setEventCounts] = useState<{[key: string]: number}>({});
+  const [loadingEventDetails, setLoadingEventDetails] = useState(false);
+  const [showPdfPreview, setShowPdfPreview] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string>('');
 
   // Default location names
   const defaultLocationNames = [
@@ -102,6 +134,7 @@ const ManageLocationPage: React.FC = () => {
         const user = JSON.parse(userData);
         setCurrentUser(user);
         loadLocationData();
+        loadAllEventsAndCounts();
       } catch (error) {
         console.error('Error parsing user data:', error);
         setLoading(false);
@@ -135,6 +168,664 @@ const ManageLocationPage: React.FC = () => {
   // Clear all date filters
   const clearDateFilters = () => {
     setSelectedFilterDates([]);
+  };
+
+  // Function to load all events and calculate event counts for calendar badges
+  const loadAllEventsAndCounts = async () => {
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) return;
+
+      const response = await fetch(`${API_BASE_URL}/events`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const events = data.data || [];
+        setAllEvents(events);
+
+        // Calculate event counts per date
+        const counts: {[key: string]: number} = {};
+        
+        events.forEach((event: any) => {
+          if (event.status === 'submitted' || event.status === 'approved') {
+            // Convert UTC dates to local timezone
+            const eventStartDate = new Date(event.startDate);
+            const eventEndDate = new Date(event.endDate);
+            
+            // Get the local date in YYYY-MM-DD format
+            const eventStartLocalDate = eventStartDate.toLocaleDateString('en-CA');
+            const eventEndLocalDate = eventEndDate.toLocaleDateString('en-CA');
+            
+            // Count events for each date in the range
+            const startDate = new Date(eventStartLocalDate);
+            const endDate = new Date(eventEndLocalDate);
+            
+            for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+              const dateKey = d.toLocaleDateString('en-CA');
+              counts[dateKey] = (counts[dateKey] || 0) + 1;
+            }
+          }
+        });
+
+        setEventCounts(counts);
+      }
+    } catch (error) {
+      console.error('Error loading events for counts:', error);
+    }
+  };
+
+  // Function to get event count for a specific location and date
+  const getLocationEventCount = (locationName: string, dateStr: string): number => {
+    return allEvents.filter((event: any) => {
+      // Check location match
+      const eventLocation = (event.location || '').toLowerCase().trim();
+      const searchLocation = locationName.toLowerCase().trim();
+      const locationMatch = eventLocation.includes(searchLocation) || 
+                           searchLocation.includes(eventLocation) ||
+                           eventLocation === searchLocation;
+      
+      // Check date match
+      const eventStartDate = new Date(event.startDate);
+      const eventEndDate = new Date(event.endDate);
+      const eventStartLocalDate = eventStartDate.toLocaleDateString('en-CA');
+      const eventEndLocalDate = eventEndDate.toLocaleDateString('en-CA');
+      const dateMatch = dateStr >= eventStartLocalDate && dateStr <= eventEndLocalDate;
+      
+      // Check status
+      const statusMatch = event.status === 'submitted' || event.status === 'approved';
+      
+      return locationMatch && dateMatch && statusMatch;
+    }).length;
+  };
+
+  // Function to fetch bookings for a specific location on the selected date
+  const fetchLocationBookings = async (locationName: string) => {
+    if (!selectedDate) return;
+    
+    const locationKey = `${locationName}-${format(selectedDate, 'yyyy-MM-dd')}`;
+    
+    // Don't fetch if already loading or already have data
+    if (loadingBookings[locationKey] || locationBookings[locationKey]) {
+      return;
+    }
+    
+    setLoadingBookings(prev => ({ ...prev, [locationKey]: true }));
+    
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        setLoadingBookings(prev => ({ ...prev, [locationKey]: false }));
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/events`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const events = data.data || [];
+        
+        // Filter events for this specific location and date
+        const dateStr = format(selectedDate, 'yyyy-MM-dd');
+        console.log(`🔍 Fetching bookings for location: "${locationName}" on date: ${dateStr}`);
+        console.log(`📊 Total events found: ${events.length}`);
+        
+        // Debug: Show all events for this date regardless of location
+        const allEventsForDate = events.filter((event: any) => {
+          // Convert UTC dates to local timezone for proper comparison
+          const eventStartDate = new Date(event.startDate);
+          const eventEndDate = new Date(event.endDate);
+          
+          // Get the local date in Asia/Manila timezone
+          const eventStartLocalDate = eventStartDate.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+          const eventEndLocalDate = eventEndDate.toLocaleDateString('en-CA');
+          
+          return dateStr >= eventStartLocalDate && dateStr <= eventEndLocalDate;
+        });
+        
+        console.log(`📅 ALL events for ${dateStr} (${allEventsForDate.length} total):`);
+        allEventsForDate.forEach((event: any, index: number) => {
+          console.log(`   ${index + 1}. "${event.eventTitle}" at "${event.location}" (Status: ${event.status})`);
+        });
+        
+        const locationEvents = events.filter((event: any) => {
+          // Check if event location matches (case-insensitive and flexible matching)
+          const eventLocation = (event.location || '').toLowerCase().trim();
+          const searchLocation = locationName.toLowerCase().trim();
+          
+          const eventLocationMatch = eventLocation.includes(searchLocation) || 
+                                    searchLocation.includes(eventLocation) ||
+                                    eventLocation === searchLocation;
+          
+          // Check if event date range includes the selected date (handle timezone properly)
+          const eventStartDate = new Date(event.startDate);
+          const eventEndDate = new Date(event.endDate);
+          
+          // Get the local date in Asia/Manila timezone
+          const eventStartLocalDate = eventStartDate.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+          const eventEndLocalDate = eventEndDate.toLocaleDateString('en-CA');
+          
+          const isInDateRange = dateStr >= eventStartLocalDate && dateStr <= eventEndLocalDate;
+          
+          console.log(`🎯 Event: "${event.eventTitle}"`);
+          console.log(`   Location: "${event.location}" | Match: ${eventLocationMatch}`);
+          console.log(`   Date Range: ${eventStartDate} to ${eventEndDate} | In Range: ${isInDateRange}`);
+          console.log(`   Status: ${event.status} | Valid Status: ${event.status === 'submitted' || event.status === 'approved'}`);
+          
+          const matches = eventLocationMatch && isInDateRange && 
+                         (event.status === 'submitted' || event.status === 'approved');
+          console.log(`   ✅ Final Match: ${matches}`);
+          
+          return matches;
+        });
+        
+        console.log(`📋 Filtered events for ${locationName}: ${locationEvents.length} events`);
+        locationEvents.forEach((event: any, index: number) => {
+          console.log(`   ${index + 1}. ${event.eventTitle} at ${event.location}`);
+        });
+
+        // Map to booking format
+        const bookings: LocationBooking[] = locationEvents.map((event: any) => ({
+          eventId: event._id,
+          eventTitle: event.eventTitle,
+          requestor: event.requestor,
+          requestorDepartment: event.requestorDepartment,
+          startTime: event.startTime,
+          endTime: event.endTime,
+          participants: event.participants,
+          vip: event.vip,
+          vvip: event.vvip,
+          status: event.status
+        }));
+
+        setLocationBookings(prev => ({ ...prev, [locationKey]: bookings }));
+      }
+    } catch (error) {
+      console.error('Error fetching location bookings:', error);
+    } finally {
+      setLoadingBookings(prev => ({ ...prev, [locationKey]: false }));
+    }
+  };
+
+  // Format time to 12-hour AM/PM format
+  const formatTime12Hour = (time: string): string => {
+    if (!time) return '';
+    
+    const [hours, minutes] = time.split(':');
+    const hour = parseInt(hours, 10);
+    const minute = minutes || '00';
+    
+    if (hour === 0) {
+      return `12:${minute} AM`;
+    } else if (hour < 12) {
+      return `${hour}:${minute} AM`;
+    } else if (hour === 12) {
+      return `12:${minute} PM`;
+    } else {
+      return `${hour - 12}:${minute} PM`;
+    }
+  };
+
+
+  // Generate PDF preview for specific event (instead of showing modal)
+  const generateEventPdfPreview = async (eventId: string) => {
+    setLoadingEventDetails(true);
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        toast.error('Please login to view event details');
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/events/${eventId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const event = data.data;
+        
+        // Generate PDF for this single event
+        await generateSingleEventPdf(event);
+      } else {
+        toast.error('Failed to fetch event details');
+      }
+    } catch (error) {
+      console.error('Error fetching event details:', error);
+      toast.error('Failed to fetch event details');
+    } finally {
+      setLoadingEventDetails(false);
+    }
+  };
+
+  // Generate PDF for a single event
+  const generateSingleEventPdf = async (event: any) => {
+    try {
+      // Create new PDF document (same as admin)
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 20;
+      let logoImg: HTMLImageElement | null = null;
+
+      // Load logo once
+      try {
+        logoImg = new Image();
+        logoImg.crossOrigin = 'anonymous';
+        
+        await new Promise((resolve, reject) => {
+          logoImg!.onload = resolve;
+          logoImg!.onerror = reject;
+          logoImg!.src = '/images/bataanlogo.png';
+        });
+      } catch (error) {
+        console.warn('Could not load logo, continuing without it:', error);
+      }
+
+      // Add header
+      let yPos = margin;
+      
+      // Add logo if available
+      if (logoImg) {
+        const logoWidth = 15;
+        const logoHeight = 15;
+        const logoX = (pageWidth - logoWidth) / 2;
+        pdf.addImage(logoImg, 'PNG', logoX, yPos, logoWidth, logoHeight);
+        yPos += logoHeight + 5;
+      } else {
+        yPos += 3;
+      }
+
+      pdf.setFontSize(14);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('PROVINCIAL GOVERNMENT OF BATAAN', pageWidth / 2, yPos, { align: 'center' });
+      
+      yPos += 6;
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text('Event Details Report', pageWidth / 2, yPos, { align: 'center' });
+      
+      yPos += 8;
+      pdf.setFontSize(9);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Generated on ${format(new Date(), 'MMMM dd, yyyy')} at ${format(new Date(), 'h:mm a')}`, pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+
+      // Event title (with text wrapping)
+      pdf.setFontSize(12);
+      pdf.setFont('helvetica', 'bold');
+      const wrappedTitle = pdf.splitTextToSize(event.eventTitle.toUpperCase(), pageWidth - 2 * margin);
+      pdf.text(wrappedTitle, margin, yPos);
+      yPos += wrappedTitle.length * 6 + 5;
+
+      // Event details in structured format
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Requestor:', margin, yPos);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(event.requestor, margin + 25, yPos);
+      
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Department:', margin + 90, yPos);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(event.taggedDepartments?.length > 0 ? event.taggedDepartments.join(', ') : event.requestorDepartment || 'N/A', margin + 115, yPos);
+      yPos += 7;
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Start Date:', margin, yPos);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(format(new Date(event.startDate), 'MMMM dd, yyyy'), margin + 25, yPos);
+      
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Start Time:', margin + 90, yPos);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(formatTime12Hour(event.startTime), margin + 115, yPos);
+      yPos += 7;
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('End Date:', margin, yPos);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(format(new Date(event.endDate), 'MMMM dd, yyyy'), margin + 25, yPos);
+      
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('End Time:', margin + 90, yPos);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(formatTime12Hour(event.endTime), margin + 115, yPos);
+      yPos += 7;
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Location:', margin, yPos);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(event.location, margin + 25, yPos);
+      
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Participants:', margin + 90, yPos);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`${event.participants} attendees`, margin + 115, yPos);
+      yPos += 7;
+
+      if ((event.vip && event.vip > 0) || (event.vvip && event.vvip > 0)) {
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('VIP:', margin, yPos);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(`${event.vip || 0} VIPs`, margin + 25, yPos);
+        
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('VVIP:', margin + 90, yPos);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(`${event.vvip || 0} VVIPs`, margin + 115, yPos);
+        yPos += 7;
+      }
+
+      yPos += 5;
+
+      // Contact Information
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Contact Information', margin, yPos);
+      yPos += 6;
+
+      pdf.setFontSize(9);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Email:', margin, yPos);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(event.contactEmail, margin + 15, yPos);
+      
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Phone:', margin + 90, yPos);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(event.contactNumber, margin + 105, yPos);
+      yPos += 10;
+
+      // Description if exists
+      if (event.description) {
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Event Description', margin, yPos);
+        yPos += 6;
+
+        pdf.setFontSize(9);
+        pdf.setFont('helvetica', 'normal');
+        const splitDescription = pdf.splitTextToSize(event.description, pageWidth - 2 * margin);
+        pdf.text(splitDescription, margin, yPos);
+        yPos += splitDescription.length * 4 + 5;
+      }
+
+      // Footer
+      pdf.setFontSize(8);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`© ${new Date().getFullYear()} Provincial Government of Bataan - Event Management System`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+      pdf.text(`Event Details Report`, pageWidth / 2, pageHeight - 5, { align: 'center' });
+
+      // Create blob URL for PDF preview
+      const pdfBlob = pdf.output('blob');
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+      setPdfPreviewUrl(pdfUrl);
+      setShowPdfPreview(true);
+      
+    } catch (error) {
+      console.error('Error generating single event PDF preview:', error);
+      toast.error('Failed to generate PDF preview');
+    }
+  };
+
+  // Generate PDF preview for location bookings (same design as admin)
+  const generateLocationBookingsPdf = async () => {
+    try {
+      // Get all events for locations managed by current user
+      const locationBookingEvents = allEvents.filter((event: any) => {
+        // Check if event location matches any of the default location names
+        const eventLocation = (event.location || '').toLowerCase().trim();
+        return defaultLocationNames.some(locationName => 
+          eventLocation.includes(locationName.toLowerCase()) || 
+          locationName.toLowerCase().includes(eventLocation)
+        ) && (event.status === 'submitted' || event.status === 'approved');
+      });
+
+      if (locationBookingEvents.length === 0) {
+        toast.error('No location bookings found to generate PDF');
+        return;
+      }
+
+      // Create new PDF document (same as admin)
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 20;
+      let logoImg: HTMLImageElement | null = null;
+
+      // Load logo once
+      try {
+        logoImg = new Image();
+        logoImg.crossOrigin = 'anonymous';
+        
+        await new Promise((resolve, reject) => {
+          logoImg!.onload = resolve;
+          logoImg!.onerror = reject;
+          logoImg!.src = '/images/bataanlogo.png';
+        });
+      } catch (error) {
+        console.warn('Could not load logo, continuing without it:', error);
+      }
+
+      // Function to add header to any page
+      const addHeader = (isFirstPage = false) => {
+        let yPos = margin;
+        
+        // Add logo if available
+        if (logoImg) {
+          const logoWidth = 15;
+          const logoHeight = 15;
+          const logoX = (pageWidth - logoWidth) / 2;
+          pdf.addImage(logoImg, 'PNG', logoX, yPos, logoWidth, logoHeight);
+          yPos += logoHeight + 5;
+        } else {
+          yPos += 3;
+        }
+
+        pdf.setFontSize(14);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('PROVINCIAL GOVERNMENT OF BATAAN', pageWidth / 2, yPos, { align: 'center' });
+        
+        yPos += 6;
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text('Location Bookings Report', pageWidth / 2, yPos, { align: 'center' });
+        
+        yPos += 8;
+        
+        // Only add generation date on first page
+        if (isFirstPage) {
+          pdf.setFontSize(9);
+          pdf.setFont('helvetica', 'normal');
+          pdf.text(`Generated on ${format(new Date(), 'MMMM dd, yyyy')} at ${format(new Date(), 'h:mm a')}`, pageWidth / 2, yPos, { align: 'center' });
+          yPos += 15;
+        } else {
+          yPos += 8;
+        }
+        
+        return yPos;
+      };
+
+      // Add header to first page
+      let yPosition = addHeader(true);
+
+      // Process each event
+      for (let i = 0; i < locationBookingEvents.length; i++) {
+        const event = locationBookingEvents[i];
+        
+        // Check if we need a new page
+        if (yPosition > pageHeight - 60) {
+          pdf.addPage();
+          yPosition = addHeader();
+        }
+
+        // Event title (with text wrapping)
+        pdf.setFontSize(12);
+        pdf.setFont('helvetica', 'bold');
+        const wrappedTitle = pdf.splitTextToSize(event.eventTitle.toUpperCase(), pageWidth - 2 * margin);
+        pdf.text(wrappedTitle, margin, yPosition);
+        yPosition += wrappedTitle.length * 6 + 5;
+
+        // Event details in structured format
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Requestor:', margin, yPosition);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(event.requestor, margin + 25, yPosition);
+        
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Department:', margin + 90, yPosition);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(event.taggedDepartments?.length > 0 ? event.taggedDepartments.join(', ') : event.requestorDepartment || 'N/A', margin + 115, yPosition);
+        yPosition += 7;
+
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Start Date:', margin, yPosition);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(format(new Date(event.startDate), 'MMMM dd, yyyy'), margin + 25, yPosition);
+        
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Start Time:', margin + 90, yPosition);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(formatTime12Hour(event.startTime), margin + 115, yPosition);
+        yPosition += 7;
+
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('End Date:', margin, yPosition);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(format(new Date(event.endDate), 'MMMM dd, yyyy'), margin + 25, yPosition);
+        
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('End Time:', margin + 90, yPosition);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(formatTime12Hour(event.endTime), margin + 115, yPosition);
+        yPosition += 7;
+
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Location:', margin, yPosition);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(event.location, margin + 25, yPosition);
+        
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Participants:', margin + 90, yPosition);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(`${event.participants} attendees`, margin + 115, yPosition);
+        yPosition += 7;
+
+        if ((event.vip && event.vip > 0) || (event.vvip && event.vvip > 0)) {
+          pdf.setFont('helvetica', 'bold');
+          pdf.text('VIP:', margin, yPosition);
+          pdf.setFont('helvetica', 'normal');
+          pdf.text(`${event.vip || 0} VIPs`, margin + 25, yPosition);
+          
+          pdf.setFont('helvetica', 'bold');
+          pdf.text('VVIP:', margin + 90, yPosition);
+          pdf.setFont('helvetica', 'normal');
+          pdf.text(`${event.vvip || 0} VVIPs`, margin + 115, yPosition);
+          yPosition += 7;
+        }
+
+        yPosition += 5;
+
+        // Contact Information
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Contact Information', margin, yPosition);
+        yPosition += 6;
+
+        pdf.setFontSize(9);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Email:', margin, yPosition);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(event.contactEmail, margin + 15, yPosition);
+        
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Phone:', margin + 90, yPosition);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(event.contactNumber, margin + 105, yPosition);
+        yPosition += 10;
+
+        // Description if exists
+        if (event.description) {
+          pdf.setFontSize(10);
+          pdf.setFont('helvetica', 'bold');
+          pdf.text('Event Description', margin, yPosition);
+          yPosition += 6;
+
+          pdf.setFontSize(9);
+          pdf.setFont('helvetica', 'normal');
+          const splitDescription = pdf.splitTextToSize(event.description, pageWidth - 2 * margin);
+          pdf.text(splitDescription, margin, yPosition);
+          yPosition += splitDescription.length * 4 + 5;
+        }
+
+        yPosition += 15;
+
+        // Add separator line between events (only if not the last event)
+        if (i < locationBookingEvents.length - 1) {
+          // Add a new page for the next event
+          pdf.addPage();
+          yPosition = addHeader();
+        }
+      }
+
+      // Footer
+      const totalPages = pdf.internal.pages.length - 1;
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(`© ${new Date().getFullYear()} Provincial Government of Bataan - Location Management System`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+        pdf.text(`This report contains ${locationBookingEvents.length} location booking(s)`, pageWidth / 2, pageHeight - 5, { align: 'center' });
+      }
+
+      // Create blob URL for PDF preview
+      const pdfBlob = pdf.output('blob');
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+      setPdfPreviewUrl(pdfUrl);
+      setShowPdfPreview(true);
+      
+    } catch (error) {
+      console.error('Error generating PDF preview:', error);
+      toast.error('Failed to generate PDF preview');
+    }
+  };
+
+  // Download actual PDF
+  const downloadLocationBookingsPdf = async () => {
+    try {
+      if (!pdfPreviewUrl) {
+        toast.error('No PDF preview available');
+        return;
+      }
+
+      // Create a temporary link to download the PDF
+      const link = document.createElement('a');
+      link.href = pdfPreviewUrl;
+      link.download = `Location_Bookings_Report_${format(new Date(), 'yyyy-MM-dd')}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      toast.success('PDF downloaded successfully!');
+      
+    } catch (error) {
+      console.error('Error downloading PDF:', error);
+      toast.error('Failed to download PDF');
+    }
   };
 
   const loadLocationData = async () => {
@@ -409,8 +1100,41 @@ const ManageLocationPage: React.FC = () => {
     });
   };
 
+  // Check if location has active events
+  const locationHasEvents = (locationName: string, date: Date): boolean => {
+    const dateStr = format(date, 'yyyy-MM-dd');
+    
+    return allEvents.some((event: any) => {
+      // Check if event location matches
+      const eventLocation = (event.location || '').toLowerCase().trim();
+      const searchLocation = locationName.toLowerCase().trim();
+      const locationMatch = eventLocation.includes(searchLocation) ||
+                             searchLocation.includes(eventLocation) ||
+                             eventLocation === searchLocation;
+
+      // Check if event date matches
+      const eventStartDate = new Date(event.startDate);
+      const eventEndDate = new Date(event.endDate);
+      const eventStartLocalDate = eventStartDate.toLocaleDateString('en-CA');
+      const eventEndLocalDate = eventEndDate.toLocaleDateString('en-CA');
+      const dateMatch = dateStr >= eventStartLocalDate && dateStr <= eventEndLocalDate;
+
+      // Check if event is active (submitted or approved)
+      const statusMatch = event.status === 'submitted' || event.status === 'approved';
+
+      return locationMatch && dateMatch && statusMatch;
+    });
+  };
+
   const handleRemoveLocation = async (index: number) => {
     const locationToRemove = locationsForDate[index];
+    
+    // Check if location has active events before allowing deletion
+    if (locationHasEvents(locationToRemove.locationName, selectedDate!)) {
+      toast.error(`Cannot delete "${locationToRemove.locationName}" - this location has active event bookings on this date`);
+      return;
+    }
+    
     setDeletingIndex(index); // Set loading state
     
     try {
@@ -618,6 +1342,15 @@ const ManageLocationPage: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <Button
+              onClick={generateLocationBookingsPdf}
+              variant="outline"
+              className="gap-2"
+              disabled={allEvents.length === 0}
+            >
+              <FileDown className="w-4 h-4" />
+              Generate PDF Report
+            </Button>
             <Badge variant="outline" className="gap-2">
               <Building2 className="w-4 h-4" />
               {currentUser?.department || 'PMO'}
@@ -818,6 +1551,11 @@ const ManageLocationPage: React.FC = () => {
                 showNavigation={true}
                 showLegend={false}
                 cellHeight="min-h-[120px]"
+                showEventCount={true}
+                getEventCountForDate={(date: Date) => {
+                  const dateStr = date.toLocaleDateString('en-CA');
+                  return eventCounts[dateStr] || 0;
+                }}
               />
             </div>
           </CardContent>
@@ -826,7 +1564,7 @@ const ManageLocationPage: React.FC = () => {
 
       {/* Multi-Location Modal */}
       <Dialog open={showLocationModal} onOpenChange={setShowLocationModal}>
-        <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-6xl max-h-[85vh] overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <MapPin className="w-5 h-5" />
@@ -834,14 +1572,19 @@ const ManageLocationPage: React.FC = () => {
             </DialogTitle>
           </DialogHeader>
           
-          <div className="space-y-6 py-4">
-            {/* Existing Locations */}
-            {locationsForDate.length > 0 && (
-              <div className="space-y-3">
+          {/* 2 Column Layout */}
+          <div className="grid grid-cols-2 gap-6 py-4 h-full overflow-hidden">
+            {/* LEFT COLUMN - Existing Locations */}
+            <div className="space-y-4 border-r pr-6">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-blue-600" />
                 <h4 className="text-sm font-medium text-gray-900">
-                  Locations for this date ({locationsForDate.length}):
+                  Locations for this Date ({locationsForDate.length})
                 </h4>
-                <div className={`space-y-2 ${locationsForDate.length > 3 ? 'max-h-64 overflow-y-auto pr-2' : ''}`}>
+              </div>
+              
+              {locationsForDate.length > 0 ? (
+                <div className="space-y-2 overflow-y-auto max-h-[60vh] pr-2">
                   {locationsForDate.map((location, index) => (
                     <div key={index} className="flex items-center justify-between p-3 border rounded-lg bg-gray-50">
                       <div className="flex-1">
@@ -855,28 +1598,180 @@ const ManageLocationPage: React.FC = () => {
                           Capacity: {location.capacity} | {location.description || 'No description'}
                         </div>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleRemoveLocation(index)}
-                        disabled={deletingIndex === index}
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50 disabled:opacity-50"
-                      >
-                        {deletingIndex === index ? (
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
-                        ) : (
-                          <Trash2 className="w-4 h-4" />
-                        )}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        {/* Bookings Button with Popover */}
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => fetchLocationBookings(location.locationName)}
+                              className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 gap-1 relative"
+                            >
+                              <Eye className="w-3 h-3" />
+                              Bookings
+                              {(() => {
+                                const dateStr = selectedDate ? format(selectedDate, 'yyyy-MM-dd') : '';
+                                const count = getLocationEventCount(location.locationName, dateStr);
+                                return count > 0 ? (
+                                  <Badge 
+                                    variant="default" 
+                                    className="absolute -top-2 -right-2 h-5 min-w-5 text-xs bg-blue-600 hover:bg-blue-700 px-1.5"
+                                  >
+                                    {count}
+                                  </Badge>
+                                ) : null;
+                              })()}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-96 p-0 max-h-[500px] overflow-hidden" align="end">
+                            <div className="p-4 flex flex-col max-h-[500px]">
+                              <div className="flex items-center gap-2 mb-3 flex-shrink-0">
+                                <CalendarIcon className="w-4 h-4 text-blue-600" />
+                                <h4 className="font-medium text-sm">
+                                  Bookings for {location.locationName}
+                                </h4>
+                              </div>
+                              <div className="text-xs text-gray-600 mb-3 flex-shrink-0">
+                                {selectedDate && format(selectedDate, 'MMMM dd, yyyy')}
+                              </div>
+                              
+                              {(() => {
+                                const locationKey = `${location.locationName}-${selectedDate ? format(selectedDate, 'yyyy-MM-dd') : ''}`;
+                                const isLoading = loadingBookings[locationKey];
+                                const bookings = locationBookings[locationKey] || [];
+                                
+                                if (isLoading) {
+                                  return (
+                                    <div className="flex items-center justify-center py-4">
+                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                                      <span className="ml-2 text-xs text-gray-600">Loading bookings...</span>
+                                    </div>
+                                  );
+                                }
+                                
+                                if (bookings.length === 0) {
+                                  return (
+                                    <div className="text-center py-4">
+                                      <CalendarIcon className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                                      <p className="text-xs text-gray-500">No bookings for this date</p>
+                                    </div>
+                                  );
+                                }
+                                
+                                return (
+                                  <div className="flex-1 overflow-y-auto min-h-0">
+                                    <div className="space-y-2 pr-2">
+                                      {bookings.map((booking) => (
+                                      <div key={booking.eventId} className="p-3 border rounded-lg bg-white">
+                                        <div className="flex items-start justify-between mb-2">
+                                          <h5 className="font-medium text-sm text-gray-900 line-clamp-1">
+                                            {booking.eventTitle}
+                                          </h5>
+                                          <Badge 
+                                            variant={booking.status === 'approved' ? 'default' : 'secondary'}
+                                            className="text-xs ml-2"
+                                          >
+                                            {booking.status}
+                                          </Badge>
+                                        </div>
+                                        
+                                        <div className="space-y-1">
+                                          <div className="flex items-center gap-2 text-xs text-gray-600">
+                                            <Clock className="w-3 h-3" />
+                                            {formatTime12Hour(booking.startTime)} - {formatTime12Hour(booking.endTime)}
+                                          </div>
+                                          
+                                          <div className="flex items-center gap-2 text-xs text-gray-600">
+                                            <Users className="w-3 h-3" />
+                                            {booking.participants} participants
+                                            {(booking.vip && booking.vip > 0) && (
+                                              <Badge variant="outline" className="text-xs ml-1 bg-yellow-50 text-yellow-700 border-yellow-200">
+                                                VIP: {booking.vip}
+                                              </Badge>
+                                            )}
+                                            {(booking.vvip && booking.vvip > 0) && (
+                                              <Badge variant="outline" className="text-xs ml-1 bg-purple-50 text-purple-700 border-purple-200">
+                                                VVIP: {booking.vvip}
+                                              </Badge>
+                                            )}
+                                          </div>
+                                          
+                                          <div className="text-xs text-gray-500">
+                                            <span className="font-medium">Requestor:</span> {booking.requestor}
+                                          </div>
+                                          
+                                          <div className="text-xs text-gray-500">
+                                            <span className="font-medium">Department:</span> {booking.requestorDepartment}
+                                          </div>
+                                          
+                                          {/* Full Details Button */}
+                                          <div className="mt-3 pt-2 border-t border-gray-100">
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={() => generateEventPdfPreview(booking.eventId)}
+                                              disabled={loadingEventDetails}
+                                              className="w-full gap-2 text-xs"
+                                            >
+                                              <Eye className="w-3 h-3" />
+                                              {loadingEventDetails ? 'Loading...' : 'PDF Preview'}
+                                            </Button>
+                                          </div>
+                                        </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                        
+                        {/* Delete Button */}
+                        {(() => {
+                          const hasEvents = locationHasEvents(location.locationName, selectedDate!);
+                          return (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRemoveLocation(index)}
+                              disabled={deletingIndex === index || hasEvents}
+                              className={`${
+                                hasEvents 
+                                  ? 'text-gray-400 cursor-not-allowed' 
+                                  : 'text-red-600 hover:text-red-700 hover:bg-red-50'
+                              } disabled:opacity-50`}
+                              title={hasEvents ? 'Cannot delete - location has active event bookings' : 'Delete location'}
+                            >
+                              {deletingIndex === index ? (
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                              ) : (
+                                <Trash2 className="w-4 h-4" />
+                              )}
+                            </Button>
+                          );
+                        })()}
+                      </div>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <Building2 className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p className="text-sm">No locations set for this date</p>
+                  <p className="text-xs">Add locations using the form on the right</p>
+                </div>
+              )}
+            </div>
 
-            {/* Add New Location Form */}
-            <div className="space-y-4 border-t pt-4">
-              <h4 className="text-sm font-medium text-gray-900">Add New Location:</h4>
+            {/* RIGHT COLUMN - Add New Location Form */}
+            <div className="space-y-4 pl-6">
+              <div className="flex items-center gap-2">
+                <Plus className="w-4 h-4 text-green-600" />
+                <h4 className="text-sm font-medium text-gray-900">Add New Location</h4>
+              </div>
               
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -1116,34 +2011,79 @@ const ManageLocationPage: React.FC = () => {
                 <Plus className="w-4 h-4" />
                 Add New Location Data
               </Button>
+
+              {/* Action Buttons - Bottom Right */}
+              <div className="flex justify-end gap-2 pt-4 border-t mt-4">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setShowLocationModal(false);
+                    setLocationsForDate([]);
+                    setFormData({
+                      locationName: '',
+                      capacity: '',
+                      description: '',
+                      status: 'available'
+                    });
+                    setShowCustomLocationInput(false);
+                    setCustomLocationName('');
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleSaveAllLocations} 
+                  className="gap-2"
+                  disabled={locationsForDate.length === 0 && (!formData.locationName || !formData.capacity)}
+                >
+                  <Save className="w-4 h-4" />
+                  Save All Locations ({locationsForDate.length + (formData.locationName && formData.capacity ? 1 : 0)})
+                </Button>
+              </div>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
 
-          <div className="flex justify-between gap-2 pt-4 border-t">
-            <Button 
-              variant="outline" 
-              onClick={() => {
-                setShowLocationModal(false);
-                setLocationsForDate([]);
-                setFormData({
-                  locationName: '',
-                  capacity: '',
-                  description: '',
-                  status: 'available'
-                });
-                setShowCustomLocationInput(false);
-                setCustomLocationName('');
-              }}
-            >
-              Cancel
+
+      {/* PDF Preview Modal (Same as Admin) */}
+      <Dialog open={showPdfPreview} onOpenChange={setShowPdfPreview}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Printer className="w-5 h-5" />
+              PDF Preview - Location Bookings Report
+            </DialogTitle>
+            <DialogDescription>
+              This is exactly how your PDF will look when downloaded
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex-1 overflow-hidden bg-gray-100 rounded-lg">
+            {pdfPreviewUrl ? (
+              <iframe
+                src={pdfPreviewUrl}
+                className="w-full h-full border-0"
+                style={{ minHeight: '600px' }}
+                title="PDF Preview"
+              />
+            ) : (
+              <div className="flex items-center justify-center h-64">
+                <div className="text-center">
+                  <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2" />
+                  <p>Generating PDF preview...</p>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setShowPdfPreview(false)}>
+              Close Preview
             </Button>
-            <Button 
-              onClick={handleSaveAllLocations} 
-              className="gap-2"
-              disabled={locationsForDate.length === 0 && (!formData.locationName || !formData.capacity)}
-            >
-              <Save className="w-4 h-4" />
-              Save All Locations ({locationsForDate.length + (formData.locationName && formData.capacity ? 1 : 0)})
+            <Button onClick={downloadLocationBookingsPdf} className="gap-2">
+              <FileDown className="w-4 h-4" />
+              Download PDF
             </Button>
           </div>
         </DialogContent>

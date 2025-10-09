@@ -19,9 +19,6 @@ import {
   XCircle,
   AlertCircle,
   Calendar as CalendarIcon,
-  MapPin,
-  User,
-  Star,
   Clock,
   Edit3,
   Settings,
@@ -96,9 +93,7 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
   departmentName,
   requirements,
   onSave,
-  existingAvailabilities = [],
-  currentStartTime,
-  currentEndTime
+  existingAvailabilities = []
 }) => {
   const [availabilities, setAvailabilities] = useState<RequirementAvailability[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -110,6 +105,8 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
   const [showEventModal, setShowEventModal] = useState(false);
   const [selectedEventDetails, setSelectedEventDetails] = useState<EventDetails | null>(null);
   const [loadingEventDetails, setLoadingEventDetails] = useState(false);
+  const [availabilityStartTime, setAvailabilityStartTime] = useState<string>('08:00');
+  const [availabilityEndTime, setAvailabilityEndTime] = useState<string>('17:00');
 
   // Initialize states when modal opens
   useEffect(() => {
@@ -131,8 +128,8 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
           requirementText: req.text,
           isAvailable: true,
           notes: '',
-          quantity: req.type === 'physical' ? (req.totalQuantity || 1) : 1,
-          maxCapacity: req.type === 'physical' ? (req.totalQuantity || 1) : 1
+          quantity: req.type === 'physical' ? 100 : 1, // Default to 100 for physical items
+          maxCapacity: req.type === 'physical' ? (req.totalQuantity || 100) : 1
         };
       });
       setAvailabilities(initialAvailabilities);
@@ -141,6 +138,13 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
       fetchDepartmentBookings();
     }
   }, [isOpen, requirements, existingAvailabilities]);
+
+  // Refetch bookings when time range changes (but don't reset availabilities)
+  useEffect(() => {
+    if (isOpen && selectedDate) {
+      fetchDepartmentBookings();
+    }
+  }, [availabilityStartTime, availabilityEndTime]);
 
   // Toggle requirement selection
   const toggleRequirementSelection = (requirementId: string) => {
@@ -215,26 +219,26 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
         
         const isEventOnSelectedDate = selectedDateOnly >= eventStartDateOnly && selectedDateOnly <= eventEndDateOnly;
         
-        // Additional time overlap check - only include events that have time overlap with current time range
-        let hasTimeOverlap = true; // Default to true for date-only events
+        // Additional time overlap check - only include events that have time overlap with availability time range
+        let hasTimeOverlap = true; // Default to true for all-day availability
         
-        if (currentStartTime && currentEndTime && event.startTime && event.endTime) {
+        if (availabilityStartTime && availabilityEndTime && event.startTime && event.endTime) {
           // Convert times to minutes for easier comparison
           const parseTime = (timeStr: string) => {
             const [hours, minutes] = timeStr.split(':').map(Number);
             return hours * 60 + minutes;
           };
           
-          const currentStart = parseTime(currentStartTime);
-          const currentEnd = parseTime(currentEndTime);
+          const availabilityStart = parseTime(availabilityStartTime);
+          const availabilityEnd = parseTime(availabilityEndTime);
           const eventStart = parseTime(event.startTime);
           const eventEnd = parseTime(event.endTime);
           
           // Check if time ranges overlap: (start1 < end2) && (start2 < end1)
-          hasTimeOverlap = (currentStart < eventEnd) && (eventStart < currentEnd);
+          hasTimeOverlap = (availabilityStart < eventEnd) && (eventStart < availabilityEnd);
           
-          console.log(`⏰ Time overlap check for event "${event.eventTitle}":`, {
-            currentTime: `${currentStartTime}-${currentEndTime}`,
+          console.log(`Time overlap check for event "${event.eventTitle}":`, {
+            availabilityTime: `${availabilityStartTime}-${availabilityEndTime}`,
             eventTime: `${event.startTime}-${event.endTime}`,
             hasOverlap: hasTimeOverlap
           });
@@ -368,10 +372,10 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
       <DialogContent 
         className="flex flex-col overflow-hidden"
         style={{ 
-          maxWidth: '56rem', 
-          width: '95vw', 
-          height: '85vh', 
-          maxHeight: '85vh', 
+          maxWidth: '80rem', 
+          width: '98vw', 
+          height: '92vh', 
+          maxHeight: '92vh', 
           padding: 0, 
           gap: 0 
         }}
@@ -379,10 +383,36 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
         {/* Fixed Header */}
         <div className="flex-shrink-0 p-6 pb-4 border-b bg-white">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg">
-              <Edit3 className="w-5 h-5 text-blue-600" />
-              Set Resource Availability
-            </DialogTitle>
+            {/* Title with Time Range in Right Corner */}
+            <div className="flex items-center justify-between">
+              <DialogTitle className="flex items-center gap-2 text-lg">
+                <Edit3 className="w-5 h-5 text-blue-600" />
+                Set Resource Availability
+              </DialogTitle>
+              
+              {/* Compact Time Range in Right Corner */}
+              <div className="flex items-center gap-3 p-3 bg-background border rounded-lg shadow-sm">
+                <Clock className="w-4 h-4 text-muted-foreground" />
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="time"
+                    value={availabilityStartTime}
+                    onChange={(e) => setAvailabilityStartTime(e.target.value)}
+                    className="w-24 h-8 text-sm"
+                    title="Availability Start Time"
+                  />
+                  <span className="text-sm text-muted-foreground">to</span>
+                  <Input
+                    type="time"
+                    value={availabilityEndTime}
+                    onChange={(e) => setAvailabilityEndTime(e.target.value)}
+                    className="w-24 h-8 text-sm"
+                    title="Availability End Time"
+                  />
+                </div>
+              </div>
+            </div>
+            
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-2">
               <p className="text-sm text-gray-600 flex items-center">
                 <CalendarIcon className="w-4 h-4 mr-1" />
@@ -391,6 +421,9 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
               <p className="text-sm text-gray-600 flex items-center">
                 <Package className="w-4 h-4 mr-1" />
                 {departmentName} - {requirements.length} Resources
+              </p>
+              <p className="text-xs text-blue-600 ml-auto">
+                Time range: {availabilityStartTime} - {availabilityEndTime}
               </p>
             </div>
           </DialogHeader>
@@ -610,16 +643,39 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
                       <span className={`text-xs ${!availability.isAvailable ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
                         Unavailable
                       </span>
-                      <Switch
-                        checked={availability.isAvailable}
-                        onCheckedChange={(checked) => 
-                          updateAvailability(availability.requirementId, { isAvailable: checked })
-                        }
-                      />
+                      {(() => {
+                        const bookings = departmentBookings[availability.requirementId] || [];
+                        const hasActiveBookings = bookings.length > 0;
+                        
+                        return (
+                          <Switch
+                            checked={availability.isAvailable}
+                            disabled={hasActiveBookings}
+                            onCheckedChange={(checked) => 
+                              updateAvailability(availability.requirementId, { isAvailable: checked })
+                            }
+                          />
+                        );
+                      })()}
                       <span className={`text-xs ${availability.isAvailable ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
                         Available
                       </span>
                     </div>
+                    
+                    {/* Show message if toggle is disabled due to bookings */}
+                    {(() => {
+                      const bookings = departmentBookings[availability.requirementId] || [];
+                      const hasActiveBookings = bookings.length > 0;
+                      
+                      return hasActiveBookings && (
+                        <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded-md">
+                          <p className="text-xs text-orange-700 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            Cannot change availability - {bookings.length} active booking{bookings.length !== 1 ? 's' : ''} exist for today
+                          </p>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Quantity Controls (only for physical items and if available) */}
@@ -628,28 +684,34 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
                       {/* Total Quantity Display with Conflict Detection */}
                       <div className="p-2 bg-muted/30 rounded-md">
                         <Label className="text-xs font-medium text-muted-foreground">
-                          Available Quantity (After Conflicts)
+                          Quantity Status
                         </Label>
                         {(() => {
                           const requirement = requirements.find(req => req._id === availability.requirementId);
-                          const totalQuantity = requirement?.totalQuantity || 1;
+                          // Use the actual availability quantity as total capacity, not the static requirement quantity
+                          const totalCapacity = availability.quantity || requirement?.totalQuantity || 1;
                           const bookings = departmentBookings[availability.requirementId] || [];
                           const bookedQuantity = bookings.reduce((sum, booking) => sum + booking.quantity, 0);
-                          const remainingQuantity = Math.max(0, totalQuantity - bookedQuantity);
+                          const currentSetQuantity = availability.quantity;
+                          const additionalUnits = Math.max(0, currentSetQuantity - bookedQuantity);
                           
                           return (
                             <div className="space-y-1">
                               <p className="text-sm font-semibold text-foreground">
-                                {remainingQuantity} units remaining
+                                {currentSetQuantity} units will be available
                               </p>
                               {bookedQuantity > 0 && (
-                                <p className="text-xs text-orange-600">
-                                  {bookedQuantity} units already booked for this time slot
-                                </p>
+                                <div className="space-y-1">
+                                  <p className="text-xs text-orange-600">
+                                    {bookedQuantity} units already booked (minimum required)
+                                  </p>
+                                  {additionalUnits > 0 && (
+                                    <p className="text-xs text-green-600">
+                                      +{additionalUnits} additional units available for booking
+                                    </p>
+                                  )}
+                                </div>
                               )}
-                              <p className="text-xs text-muted-foreground">
-                                Total capacity: {totalQuantity} units
-                              </p>
                             </div>
                           );
                         })()}
@@ -658,36 +720,80 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
                       {/* Set Quantity Input */}
                       <div>
                         <Label htmlFor={`quantity-${availability.requirementId}`} className="text-xs font-medium text-foreground">
-                          Set Quantity for this Date
+                          Set Quantity for this Date (Can add more, cannot lessen below booked amount)
                         </Label>
                         <Input
                           id={`quantity-${availability.requirementId}`}
                           type="number"
-                          min="0"
-                          max={(() => {
-                            const requirement = requirements.find(req => req._id === availability.requirementId);
-                            const totalQuantity = requirement?.totalQuantity || 1;
+                          min={(() => {
                             const bookings = departmentBookings[availability.requirementId] || [];
                             const bookedQuantity = bookings.reduce((sum, booking) => sum + booking.quantity, 0);
-                            return Math.max(0, totalQuantity - bookedQuantity);
+                            return bookedQuantity; // Minimum is the already booked quantity
                           })()}
                           value={availability.quantity}
                           onChange={(e) => {
-                            const requirement = requirements.find(req => req._id === availability.requirementId);
-                            const totalQuantity = requirement?.totalQuantity || 1;
+                            const inputValue = e.target.value;
+                            
+                            // Allow empty input or just store the raw value while typing
+                            if (inputValue === '') {
+                              updateAvailability(availability.requirementId, { 
+                                quantity: 0
+                              });
+                              return;
+                            }
+                            
+                            const numericValue = parseInt(inputValue);
+                            
+                            // Only validate when user finishes typing (not on every keystroke)
+                            updateAvailability(availability.requirementId, { 
+                              quantity: numericValue || 0
+                            });
+                          }}
+                          onBlur={(e) => {
+                            // Only enforce minimum (booked quantity), allow any value above that
                             const bookings = departmentBookings[availability.requirementId] || [];
                             const bookedQuantity = bookings.reduce((sum, booking) => sum + booking.quantity, 0);
-                            const maxQuantity = Math.max(0, totalQuantity - bookedQuantity);
+                            const inputValue = parseInt(e.target.value) || 0;
+                            
+                            console.log(`Simple validation for ${availability.requirementText}:`, {
+                              inputValue,
+                              bookedQuantity,
+                              finalValue: Math.max(bookedQuantity, inputValue)
+                            });
+                            
+                            // Only enforce minimum - no maximum limit
+                            const validQuantity = Math.max(bookedQuantity, inputValue);
+                            
                             updateAvailability(availability.requirementId, { 
-                              quantity: Math.max(0, Math.min(maxQuantity, parseInt(e.target.value) || 0))
+                              quantity: validQuantity
                             });
                           }}
                           className="h-8 mt-1 text-sm"
                           placeholder="Enter quantity for this date"
                         />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          How many units will be available on {selectedDate ? format(selectedDate, 'MMM dd, yyyy') : 'this date'}?
-                        </p>
+                        {(() => {
+                          const bookings = departmentBookings[availability.requirementId] || [];
+                          const bookedQuantity = bookings.reduce((sum, booking) => sum + booking.quantity, 0);
+                          
+                          return (
+                            <div className="mt-1 space-y-1">
+                              <p className="text-xs text-muted-foreground">
+                                How many units will be available on {selectedDate ? format(selectedDate, 'MMM dd, yyyy') : 'this date'}?
+                              </p>
+                              {bookedQuantity > 0 ? (
+                                <p className="text-xs text-blue-600 font-medium flex items-center gap-1">
+                                  <AlertCircle className="w-3 h-3" />
+                                  {bookedQuantity} units are booked for today
+                                </p>
+                              ) : (
+                                <p className="text-xs text-green-600 font-medium flex items-center gap-1">
+                                  <CheckCircle className="w-3 h-3" />
+                                  No bookings for today - you can set any quantity
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   )}
@@ -763,16 +869,39 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
                       <span className={`text-xs ${!availability.isAvailable ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
                         Unavailable
                       </span>
-                      <Switch
-                        checked={availability.isAvailable}
-                        onCheckedChange={(checked) => 
-                          updateAvailability(availability.requirementId, { isAvailable: checked })
-                        }
-                      />
+                      {(() => {
+                        const bookings = departmentBookings[availability.requirementId] || [];
+                        const hasActiveBookings = bookings.length > 0;
+                        
+                        return (
+                          <Switch
+                            checked={availability.isAvailable}
+                            disabled={hasActiveBookings}
+                            onCheckedChange={(checked) => 
+                              updateAvailability(availability.requirementId, { isAvailable: checked })
+                            }
+                          />
+                        );
+                      })()}
                       <span className={`text-xs ${availability.isAvailable ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
                         Available
                       </span>
                     </div>
+                    
+                    {/* Show message if toggle is disabled due to bookings */}
+                    {(() => {
+                      const bookings = departmentBookings[availability.requirementId] || [];
+                      const hasActiveBookings = bookings.length > 0;
+                      
+                      return hasActiveBookings && (
+                        <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded-md">
+                          <p className="text-xs text-orange-700 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            Cannot change availability - {bookings.length} active booking{bookings.length !== 1 ? 's' : ''} exist for today
+                          </p>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Notes */}
@@ -830,6 +959,10 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
                       const bookings = departmentBookings[requirement._id] || [];
                       const totalQuantityBooked = bookings.reduce((sum, booking) => sum + booking.quantity, 0);
                       
+                      // Get the actual availability quantity for this requirement
+                      const availability = availabilities.find(av => av.requirementId === requirement._id);
+                      const actualAvailableQuantity = availability ? availability.quantity : requirement.totalQuantity || 1;
+                      
                       return (
                         <div key={requirement._id} className="space-y-4">
                           <div className="flex items-center gap-2 pb-2 border-b">
@@ -841,7 +974,7 @@ const RequirementAvailabilityModal: React.FC<RequirementAvailabilityModalProps> 
                             <h4 className="text-md font-semibold">{requirement.text}</h4>
                             <Badge variant="outline" className="ml-auto">
                               {requirement.type === 'physical' 
-                                ? `${totalQuantityBooked}/${requirement.totalQuantity || 1} booked`
+                                ? `${totalQuantityBooked}/${actualAvailableQuantity} booked`
                                 : `${bookings.length} booking${bookings.length !== 1 ? 's' : ''}`
                               }
                             </Badge>

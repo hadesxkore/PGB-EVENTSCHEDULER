@@ -260,10 +260,38 @@ const Dashboard: React.FC = () => {
             <Tabs defaultValue="all" className="w-full">
               <div className="px-3 pt-2">
                 <TabsList className="grid w-full grid-cols-4 h-8">
-                  <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
-                  <TabsTrigger value="upcoming" className="text-xs">Upcoming</TabsTrigger>
-                  <TabsTrigger value="tagged" className="text-xs">Tagged</TabsTrigger>
-                  <TabsTrigger value="status" className="text-xs">Status</TabsTrigger>
+                  <TabsTrigger value="all" className="text-xs relative">
+                    All
+                    {notifications.length > 0 && (
+                      <Badge variant="destructive" className="ml-1 h-4 min-w-4 text-xs px-1">
+                        {notifications.length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger value="upcoming" className="text-xs relative">
+                    Upcoming
+                    {notifications.filter(n => n.category === 'upcoming').length > 0 && (
+                      <Badge variant="destructive" className="ml-1 h-4 min-w-4 text-xs px-1">
+                        {notifications.filter(n => n.category === 'upcoming').length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger value="tagged" className="text-xs relative">
+                    Tagged
+                    {notifications.filter(n => n.category === 'tagged').length > 0 && (
+                      <Badge variant="destructive" className="ml-1 h-4 min-w-4 text-xs px-1">
+                        {notifications.filter(n => n.category === 'tagged').length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger value="status" className="text-xs relative">
+                    Status
+                    {notifications.filter(n => n.category === 'status').length > 0 && (
+                      <Badge variant="destructive" className="ml-1 h-4 min-w-4 text-xs px-1">
+                        {notifications.filter(n => n.category === 'status').length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
                 </TabsList>
               </div>
               
