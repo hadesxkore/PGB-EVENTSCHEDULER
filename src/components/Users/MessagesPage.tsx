@@ -1,25 +1,99 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+
+// Authenticated Image Component
+const AuthenticatedImage: React.FC<{ 
+  filePath: string; 
+  fileName: string; 
+  className?: string;
+  onClick?: () => void;
+}> = ({ filePath, fileName, className, onClick }) => {
+  const [imageUrl, setImageUrl] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    const loadImage = async () => {
+      try {
+        const token = localStorage.getItem('authToken');
+        const response = await fetch(`http://localhost:5000/api/messages/file/${filePath}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (response.ok) {
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          setImageUrl(url);
+        } else {
+          setError(true);
+        }
+      } catch (err) {
+        setError(true);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadImage();
+
+    // Cleanup blob URL on unmount
+    return () => {
+      if (imageUrl) {
+        window.URL.revokeObjectURL(imageUrl);
+      }
+    };
+  }, [filePath]);
+
+  if (loading) {
+    return (
+      <div className={`bg-gray-200 rounded-lg p-4 flex items-center justify-center min-h-[100px] ${className}`}>
+        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  if (error || !imageUrl) {
+    return (
+      <div className={`bg-gray-200 rounded-lg p-4 flex items-center justify-center min-h-[100px] ${className}`}>
+        <span className="text-sm text-gray-600">📷 {fileName}</span>
+      </div>
+    );
+  }
+
+  return (
+    <img 
+      src={imageUrl}
+      alt={fileName}
+      className={`rounded-lg max-w-full h-auto cursor-pointer hover:opacity-90 ${className}`}
+      onClick={onClick}
+    />
+  );
+};
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
 import { 
   MessageCircle, 
   Search, 
-  Plus, 
   ChevronRight, 
   ChevronDown, 
-  Users,
   Send, 
   Paperclip, 
-  MoreVertical,
+  AlertCircle,
   Check,
   CheckCheck,
   Calendar,
-  Smile
+  Smile,
+  User,
+  Image,
+  FileText
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useSocket } from '@/hooks/useSocket';
 
 interface User {
@@ -33,12 +107,23 @@ interface User {
 }
 
 interface Message {
-  id: string;
-  senderId: string;
+  _id: string;
+  senderId: string | { _id: string; email: string; department: string };
+  receiverId: string;
   content: string;
-  timestamp: Date;
+  messageType: 'text' | 'image' | 'file';
+  timestamp: string;
   isRead: boolean;
-  type: 'text' | 'image' | 'file';
+  attachments?: {
+    fileName: string;
+    filePath: string;
+    fileSize: number;
+    mimeType: string;
+  }[];
+  isEdited?: boolean;
+  editedAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 interface Conversation {
@@ -58,7 +143,9 @@ const MessagesPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
+  const [isUploading, setIsUploading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // State for real event conversations
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -69,6 +156,7 @@ const MessagesPage: React.FC = () => {
 
   // Initialize Socket.IO
   const { joinConversation, leaveConversation, onNewMessage, offNewMessage, onMessagesRead, offMessagesRead } = useSocket(currentUser?.id);
+
 
   // Get current user from localStorage
   useEffect(() => {
@@ -180,7 +268,7 @@ const MessagesPage: React.FC = () => {
           
           participants.push({
             id: event.createdBy || 'unknown',
-            name: event.requestor || 'Unknown Requestor',
+            name: event.contactEmail || event.requestor || 'Unknown Requestor',
             department: event.requestorDepartment || 'Unknown',
             isOnline: Math.random() > 0.5, // Mock online status
             lastSeen: new Date(Date.now() - Math.random() * 2 * 60 * 60 * 1000)
@@ -243,13 +331,24 @@ const MessagesPage: React.FC = () => {
 
       const conversations = await Promise.all(conversationsPromises);
       setConversations(conversations);
+      
+      // Initialize some mock unread counts for demonstration
+      const mockUnreadCounts: { [key: string]: number } = {};
+      conversations.forEach(conv => {
+        conv.participants.forEach((participant: User) => {
+          if (participant.id !== user._id) {
+            const actualUserId = typeof participant.id === 'object' ? (participant.id as any)._id : participant.id;
+            const conversationId = `${conv.id}-${actualUserId}`;
+            // Add some random unread counts for demo
+            mockUnreadCounts[conversationId] = Math.floor(Math.random() * 5);
+          }
+        });
+      });
+      setUnreadCounts(mockUnreadCounts);
+      
       setLoading(false);
-      
-      // Conversation data will be fetched by useEffect when conversations state updates
-      
     } catch (error) {
       console.error('Error fetching event conversations:', error);
-      setConversations([]);
       setLoading(false);
     }
   };
@@ -271,6 +370,39 @@ const MessagesPage: React.FC = () => {
       conv.lastMessage.content.toLowerCase().includes(searchLower)
     );
   });
+
+  // Memoize event unread counts to prevent unnecessary recalculations and flickering
+  const eventUnreadCounts = useMemo(() => {
+    const counts: { [eventId: string]: number } = {};
+    
+    filteredConversations.forEach(conv => {
+      const eventId = conv.eventId || conv.id;
+      if (!counts[eventId]) {
+        // Sum up unread counts for all participants in this specific event (excluding current user)
+        const total = conv.participants.reduce((convTotal, participant) => {
+          const actualUserId = typeof participant.id === 'object' ? (participant.id as any)._id : participant.id;
+          if (actualUserId !== currentUser?.id) {
+            const conversationId = `${conv.id}-${actualUserId}`;
+            const count = unreadCounts[conversationId] || 0;
+            return convTotal + count;
+          }
+          return convTotal;
+        }, 0);
+        counts[eventId] = total;
+      }
+    });
+    
+    return counts;
+  }, [filteredConversations, unreadCounts, currentUser?.id]);
+
+  // Helper function to get event unread count
+  const getEventUnreadCount = (eventId: string) => {
+    const count = eventUnreadCounts[eventId] || 0;
+    if (count > 0) {
+      console.log(`🎯 Event "${eventId}" has ${count} unread messages`);
+    }
+    return count;
+  };
 
   // Get selected conversation data
   const selectedConv = conversations.find(c => c.id === selectedConversation?.split('-')[0]);
@@ -360,6 +492,38 @@ const MessagesPage: React.FC = () => {
     }
   };
 
+  // Mark conversation as read when user opens it
+  const markConversationAsRead = async (eventId: string, userId: string) => {
+    try {
+      const token = localStorage.getItem('authToken');
+      console.log(`👀 Marking conversation as read for eventId: ${eventId}, userId: ${userId}`);
+      
+      const response = await fetch(`http://localhost:5000/api/messages/mark-conversation-read/${eventId}/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log(`✅ Marked ${result.data.markedCount} messages as read`);
+        
+        // Update local unread count to 0 for this conversation
+        const conversationId = `${eventId}-${userId}`;
+        setUnreadCounts(prev => ({
+          ...prev,
+          [conversationId]: 0
+        }));
+      } else {
+        console.error('Failed to mark conversation as read:', response.status, response.statusText);
+      }
+    } catch (error) {
+      console.error('Error marking conversation as read:', error);
+    }
+  };
+
   // Fetch messages for selected conversation
   const fetchMessages = async (eventId: string, userId: string) => {
     try {
@@ -399,6 +563,8 @@ const MessagesPage: React.FC = () => {
         userIdType: typeof selectedUserId
       });
       fetchMessages(selectedConv.eventId || selectedConv.id, selectedUserId);
+      // Mark messages as read when user actually opens the conversation
+      markConversationAsRead(selectedConv.eventId || selectedConv.id, selectedUserId);
     } else {
       console.log('🚨 Cannot fetch messages - invalid parameters:', {
         selectedConversation,
@@ -498,6 +664,94 @@ const MessagesPage: React.FC = () => {
     }
   }, [selectedConversation, selectedConv, selectedUserId, currentUser?.id, joinConversation, leaveConversation]);
 
+  // Handle file selection
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      // Auto-send file when selected
+      handleSendFile(file);
+    }
+  };
+
+  // Handle sending file
+  const handleSendFile = async (file: File) => {
+    if (!selectedConversation || !selectedConv || !selectedUserId) return;
+    
+    setIsUploading(true);
+    
+    try {
+      const token = localStorage.getItem('authToken');
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('eventId', selectedConv.eventId || selectedConv.id);
+      formData.append('receiverId', selectedUserId);
+      formData.append('content', newMessage.trim());
+
+      const response = await fetch('http://localhost:5000/api/messages/send-file', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (response.ok) {
+        const messageData = await response.json();
+        console.log('File message sent successfully:', messageData);
+        
+        // Add the new message to local state
+        setMessages(prev => ({
+          ...prev,
+          [selectedConversation]: [...(prev[selectedConversation] || []), messageData.data]
+        }));
+        
+        setNewMessage('');
+        
+        // Reset file input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } else {
+        console.error('Failed to send file message:', response.status);
+      }
+    } catch (error) {
+      console.error('Error sending file message:', error);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Handle file download with authentication
+  const handleFileDownload = async (filePath: string, fileName: string) => {
+    try {
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(`http://localhost:5000/api/messages/file/${filePath}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      } else {
+        console.error('Failed to download file:', response.status);
+        alert('Failed to download file. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error downloading file:', error);
+      alert('Error downloading file. Please try again.');
+    }
+  };
+
+
   // Handle sending message
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedConversation || !selectedConv || !selectedUserId) return;
@@ -537,24 +791,6 @@ const MessagesPage: React.FC = () => {
     }
   };
 
-  // Get conversation display name
-  const getConversationName = (conv: Conversation) => {
-    if (conv.isGroup) {
-      return conv.groupName || 'Group Chat';
-    }
-    const otherParticipant = conv.participants.find(p => p.id !== currentUser?.id);
-    return otherParticipant?.name || 'Unknown User';
-  };
-
-  // Get conversation avatar
-  const getConversationAvatar = (conv: Conversation) => {
-    if (conv.isGroup) {
-      return conv.groupName?.charAt(0) || 'G';
-    }
-    const otherParticipant = conv.participants.find(p => p.id !== currentUser?.id);
-    return otherParticipant?.name.charAt(0) || 'U';
-  };
-
   // Format time
   const formatMessageTime = (date: Date) => {
     const now = new Date();
@@ -580,8 +816,8 @@ const MessagesPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <div className="w-full max-w-7xl mx-auto h-[calc(100vh-3rem)] flex bg-white rounded-lg shadow-lg overflow-hidden">
+    <div className="min-h-screen bg-gray-100 p-4">
+      <div className="w-full h-[calc(100vh-2rem)] flex bg-white rounded-lg shadow-lg overflow-hidden">
       {/* Left Sidebar - Conversations List */}
       <div className="w-80 bg-white border-r border-gray-200 flex flex-col rounded-l-lg">
         {/* Header */}
@@ -591,9 +827,6 @@ const MessagesPage: React.FC = () => {
               <MessageCircle className="w-5 h-5 text-blue-600" />
               Messages
             </h1>
-            <Button variant="ghost" size="sm">
-              <MoreVertical className="w-4 h-4" />
-            </Button>
           </div>
           
           {/* Search */}
@@ -666,11 +899,21 @@ const MessagesPage: React.FC = () => {
                     
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between mb-1">
-                        <h3 className="font-semibold text-sm truncate text-gray-900">
-                          {conv.eventTitle}
-                        </h3>
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <h3 className="font-semibold text-sm truncate text-gray-900">
+                            {conv.eventTitle}
+                          </h3>
+                          {(() => {
+                            const eventUnreadCount = getEventUnreadCount(conv.eventId || conv.id);
+                            return eventUnreadCount > 0 ? (
+                              <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 min-w-[20px] h-5 flex items-center justify-center rounded-full">
+                                {eventUnreadCount > 99 ? '99+' : eventUnreadCount}
+                              </Badge>
+                            ) : null;
+                          })()}
+                        </div>
                         <span className="text-xs text-gray-500">
-                          {formatMessageTime(conv.lastMessage.timestamp)}
+                          {formatMessageTime(new Date(conv.lastMessage.timestamp))}
                         </span>
                       </div>
                       
@@ -730,12 +973,6 @@ const MessagesPage: React.FC = () => {
                             const conversationId = `${conv.id}-${actualUserId}`;
                             console.log('🔍 Setting conversation ID:', conversationId);
                             setSelectedConversation(conversationId);
-                            
-                            // Clear unread count for this conversation
-                            setUnreadCounts(prev => ({
-                              ...prev,
-                              [conversationId]: 0
-                            }));
                           }}
                         >
                           <div className="flex items-center gap-3">
@@ -754,9 +991,22 @@ const MessagesPage: React.FC = () => {
                             
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center justify-between">
-                                <p className="text-sm font-medium text-gray-900 truncate">
-                                  {user.name} {isCurrentUser && '(You)'}
-                                </p>
+                                {(() => {
+                                  const actualUserId = typeof user.id === 'object' ? (user.id as any)._id : user.id;
+                                  const conversationId = `${conv.id}-${actualUserId}`;
+                                  const unreadCount = unreadCounts[conversationId] || 0;
+                                  const hasUnreadMessages = unreadCount > 0 && !isCurrentUser;
+                                  
+                                  return (
+                                    <p className={`text-sm truncate ${
+                                      hasUnreadMessages 
+                                        ? 'font-bold text-gray-900' 
+                                        : 'font-medium text-gray-900'
+                                    }`}>
+                                      {user.name} {isCurrentUser && '(You)'}
+                                    </p>
+                                  );
+                                })()}
                                 <div className="flex items-center gap-2">
                                   {(() => {
                                     const actualUserId = typeof user.id === 'object' ? (user.id as any)._id : user.id;
@@ -769,11 +1019,6 @@ const MessagesPage: React.FC = () => {
                                           <Badge className="bg-red-500 text-white text-xs min-w-[20px] h-5 flex items-center justify-center">
                                             {unreadCount > 99 ? '99+' : unreadCount}
                                           </Badge>
-                                        )}
-                                        {!user.isOnline && user.lastSeen && (
-                                          <span className="text-xs text-gray-400">
-                                            {formatMessageTime(user.lastSeen)}
-                                          </span>
                                         )}
                                       </>
                                     );
@@ -791,9 +1036,17 @@ const MessagesPage: React.FC = () => {
                                     ? latestMessage.content.substring(0, 30) + '...' 
                                     : latestMessage.content;
                                   
+                                  // Check if there are unread messages for this conversation
+                                  const unreadCount = unreadCounts[conversationId] || 0;
+                                  const hasUnreadMessages = unreadCount > 0 && !isCurrentUser;
+                                  
                                   return (
                                     <div className="flex items-center justify-between">
-                                      <p className="text-xs text-gray-500 truncate">
+                                      <p className={`text-xs truncate ${
+                                        hasUnreadMessages 
+                                          ? 'text-gray-900 font-semibold' 
+                                          : 'text-gray-500 font-normal'
+                                      }`}>
                                         {isOwnMessage ? 'You: ' : ''}{messagePreview}
                                       </p>
                                       <span className="text-xs text-gray-400 ml-2">
@@ -846,9 +1099,139 @@ const MessagesPage: React.FC = () => {
                 </div>
                 
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm">
-                    <MoreVertical className="w-4 h-4" />
-                  </Button>
+                  <Sheet>
+                    <SheetTrigger asChild>
+                      <Button variant="outline" size="sm">
+                        <AlertCircle className="w-4 h-4" />
+                      </Button>
+                    </SheetTrigger>
+                    <SheetContent className="w-[400px] sm:w-[540px] p-0">
+                      <SheetHeader className="px-6 py-4 border-b border-gray-100">
+                        <SheetTitle className="text-lg font-semibold text-gray-900">Conversation Info</SheetTitle>
+                      </SheetHeader>
+                      <div className="flex flex-col h-full">
+                        {/* User Info Section */}
+                        {(() => {
+                          const selectedUser = selectedConv?.participants?.find(p => 
+                            (typeof p.id === 'object' ? (p.id as any)._id : p.id) === selectedUserId
+                          );
+                          
+                          return (
+                            <div className="flex items-center gap-4 px-6 py-6 border-b border-gray-100">
+                              <Avatar className="w-16 h-16">
+                                <AvatarFallback className="text-lg bg-blue-100 text-blue-600">
+                                  {selectedUser?.name?.charAt(0) || selectedUser?.email?.charAt(0) || 'U'}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <h3 className="font-semibold text-lg">{selectedUser?.email || selectedUser?.name || 'Unknown User'}</h3>
+                                <p className="text-sm text-gray-600">{selectedUser?.department || 'Unknown Department'}</p>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Tabs Section */}
+                        <div className="flex-1 px-6 py-4">
+                          <Tabs defaultValue="images" className="w-full">
+                            <TabsList className="grid w-full grid-cols-2">
+                              <TabsTrigger value="images" className="flex items-center gap-2">
+                                <Image className="w-4 h-4" />
+                                Images
+                              </TabsTrigger>
+                              <TabsTrigger value="files" className="flex items-center gap-2">
+                                <FileText className="w-4 h-4" />
+                                Files
+                              </TabsTrigger>
+                            </TabsList>
+                            
+                            <TabsContent value="images" className="mt-4">
+                              <div className="grid grid-cols-3 gap-2 max-h-[400px] overflow-y-auto">
+                                {(() => {
+                                  const currentMessages = selectedConversation ? messages[selectedConversation] || [] : [];
+                                  const imageMessages = currentMessages.filter(msg => 
+                                    msg.attachments && msg.attachments.some((att: any) => att.mimeType?.startsWith('image/'))
+                                  );
+                                  
+                                  if (imageMessages.length === 0) {
+                                    return (
+                                      <div className="col-span-3 text-center py-8 text-gray-500">
+                                        <Image className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                                        <p>No images shared yet</p>
+                                      </div>
+                                    );
+                                  }
+                                  
+                                  return imageMessages.map((msg, index) => 
+                                    msg.attachments?.map((attachment: any, attIndex: number) => {
+                                      if (!attachment.mimeType?.startsWith('image/')) return null;
+                                      const filePath = attachment.filePath?.split('/').pop() || attachment.filePath;
+                                      return (
+                                        <div key={`${index}-${attIndex}`} className="aspect-square">
+                                          <AuthenticatedImage
+                                            filePath={filePath}
+                                            fileName={attachment.fileName}
+                                            className="w-full h-full object-cover rounded-lg cursor-pointer hover:opacity-90"
+                                            onClick={() => handleFileDownload(filePath, attachment.fileName)}
+                                          />
+                                        </div>
+                                      );
+                                    })
+                                  );
+                                })()}
+                              </div>
+                            </TabsContent>
+                            
+                            <TabsContent value="files" className="mt-4">
+                              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                                {(() => {
+                                  const currentMessages = selectedConversation ? messages[selectedConversation] || [] : [];
+                                  const fileMessages = currentMessages.filter(msg => 
+                                    msg.attachments && msg.attachments.some((att: any) => !att.mimeType?.startsWith('image/'))
+                                  );
+                                  
+                                  if (fileMessages.length === 0) {
+                                    return (
+                                      <div className="text-center py-8 text-gray-500">
+                                        <FileText className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                                        <p>No files shared yet</p>
+                                      </div>
+                                    );
+                                  }
+                                  
+                                  return fileMessages.map((msg, index) => 
+                                    msg.attachments?.map((attachment: any, attIndex: number) => {
+                                      if (attachment.mimeType?.startsWith('image/')) return null;
+                                      const fileName = attachment.fileName || 'Unknown file';
+                                      const fileExtension = fileName.split('.').pop()?.toUpperCase() || 'FILE';
+                                      const fileSize = attachment.fileSize ? `${Math.round(attachment.fileSize / 1024)}KB` : '';
+                                      const filePath = attachment.filePath?.split('/').pop() || attachment.filePath;
+                                      
+                                      return (
+                                        <div 
+                                          key={`${index}-${attIndex}`}
+                                          className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100"
+                                          onClick={() => handleFileDownload(filePath, fileName)}
+                                        >
+                                          <div className="w-10 h-10 bg-gray-600 rounded-md flex items-center justify-center text-white text-xs font-bold">
+                                            {fileExtension.substring(0, 3)}
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium truncate">{fileName}</p>
+                                            <p className="text-xs text-gray-500">{fileExtension} • {fileSize}</p>
+                                          </div>
+                                        </div>
+                                      );
+                                    })
+                                  );
+                                })()}
+                              </div>
+                            </TabsContent>
+                          </Tabs>
+                        </div>
+                      </div>
+                    </SheetContent>
+                  </Sheet>
                 </div>
               </div>
             </div>
@@ -888,7 +1271,96 @@ const MessagesPage: React.FC = () => {
                               : 'bg-white text-gray-900 rounded-bl-md border border-gray-200'
                           }`}
                         >
-                          <p className="text-sm">{message.content}</p>
+                          {/* Render file attachments */}
+                          {message.attachments && message.attachments.length > 0 && (
+                            <div className="mb-2">
+                              {message.attachments.map((attachment: any, index: number) => {
+                                const fileName = attachment.fileName || 'Unknown file';
+                                const fileSize = attachment.fileSize ? `${Math.round(attachment.fileSize / 1024)}KB` : '';
+                                const isImage = attachment.mimeType?.startsWith('image/');
+                                const filePath = attachment.filePath?.split('/').pop() || attachment.filePath;
+                                
+                                return (
+                                  <div key={index} className="mb-2">
+                                    {isImage ? (
+                                      <div className="max-w-sm">
+                                        <AuthenticatedImage
+                                          filePath={filePath}
+                                          fileName={fileName}
+                                          className="w-full max-w-[300px] max-h-[250px] min-h-[150px] object-cover rounded-lg"
+                                          onClick={() => handleFileDownload(filePath, fileName)}
+                                        />
+                                      </div>
+                                    ) : (
+                                      (() => {
+                                        // Get file extension
+                                        const fileExtension = fileName.split('.').pop()?.toUpperCase() || 'FILE';
+                                        
+                                        // Get file name without extension for display
+                                        const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+                                        const displayName = nameWithoutExt.length > 20 
+                                          ? nameWithoutExt.substring(0, 17) + '...' 
+                                          : nameWithoutExt;
+                                        
+                                        return (
+                                          <div 
+                                            className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:opacity-90 transition-all max-w-[280px] ${
+                                              isOwnMessage 
+                                                ? 'bg-blue-50 border border-blue-200' 
+                                                : 'bg-gray-50 border border-gray-200'
+                                            }`}
+                                            onClick={() => handleFileDownload(filePath, fileName)}
+                                          >
+                                            {/* File Type Badge */}
+                                            <div className={`flex items-center justify-center w-10 h-10 rounded-md text-xs font-bold ${
+                                              isOwnMessage 
+                                                ? 'bg-blue-600 text-white' 
+                                                : 'bg-gray-600 text-white'
+                                            }`}>
+                                              {fileExtension.substring(0, 3)}
+                                            </div>
+                                            
+                                            {/* File Info */}
+                                            <div className="flex-1 min-w-0">
+                                              <p className={`text-sm font-medium truncate ${
+                                                isOwnMessage ? 'text-blue-900' : 'text-gray-900'
+                                              }`}>
+                                                {displayName}
+                                              </p>
+                                              <p className={`text-xs ${
+                                                isOwnMessage ? 'text-blue-600' : 'text-gray-500'
+                                              }`}>
+                                                {fileExtension} • {fileSize}
+                                              </p>
+                                            </div>
+                                          </div>
+                                        );
+                                      })()
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          
+                          {/* Render text content */}
+                          {message.content && message.content.trim() && (
+                            (() => {
+                              let content = message.content.trim();
+                              
+                              // Clean up old "Sent an image:" messages for images
+                              if (message.messageType === 'image' && content.startsWith('Sent an image:')) {
+                                return null; // Don't show this old text for images
+                              }
+                              
+                              // Clean up old "Sent a file:" messages that might exist
+                              if (message.messageType === 'file' && content.startsWith('Sent a file:')) {
+                                return null; // Don't show this old text for files either
+                              }
+                              
+                              return <p className="text-sm">{content}</p>;
+                            })()
+                          )}
                         </div>
                         <div className={`flex items-center gap-1 mt-1 ${isOwnMessage ? 'justify-end' : 'justify-start'}`}>
                           <span className="text-xs text-gray-500">
@@ -920,8 +1392,23 @@ const MessagesPage: React.FC = () => {
 
             {/* Message Input */}
             <div className="bg-white border-t border-gray-200 p-4">
+              {/* File Upload Input (Hidden) */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                className="hidden"
+                accept="image/*,application/pdf,.doc,.docx,.txt,.zip,.rar,video/*,audio/*"
+              />
+              
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm">
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                  title="Attach file"
+                >
                   <Paperclip className="w-4 h-4" />
                 </Button>
                 <div className="flex-1 relative">
@@ -938,12 +1425,20 @@ const MessagesPage: React.FC = () => {
                 </div>
                 <Button 
                   onClick={handleSendMessage}
-                  disabled={!newMessage.trim()}
+                  disabled={!newMessage.trim() || isUploading}
                   className="bg-blue-600 hover:bg-blue-700"
                 >
                   <Send className="w-4 h-4" />
                 </Button>
               </div>
+              
+              {/* Upload Progress Indicator */}
+              {isUploading && (
+                <div className="mt-2 flex items-center gap-2 text-sm text-blue-600">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                  <span>Uploading file...</span>
+                </div>
+              )}
             </div>
           </>
         ) : (

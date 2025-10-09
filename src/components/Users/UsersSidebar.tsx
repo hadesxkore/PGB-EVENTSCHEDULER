@@ -29,6 +29,7 @@ interface UsersSidebarProps {
 const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
   // Get user data from localStorage for more accurate department info
   const [currentUser, setCurrentUser] = useState({
+    id: "unknown",
     name: user?.name || "User",
     email: user?.email || "user@bataan.gov.ph",
     department: user?.department || "Department"
@@ -41,6 +42,7 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
       try {
         const parsedUser = JSON.parse(userData);
         setCurrentUser({
+          id: parsedUser._id || parsedUser.id || "unknown",
           name: parsedUser.name || user?.name || "User",
           email: parsedUser.email || user?.email || "user@bataan.gov.ph",
           department: parsedUser.department || parsedUser.departmentName || user?.department || "Department"
@@ -69,6 +71,7 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
     filterByDepartment: true,
     includeAllStatuses: false
   });
+
 
   // API Configuration
   const API_BASE_URL = 'http://localhost:5000/api';
@@ -233,6 +236,7 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
                   className="absolute -top-1 -right-1"
                 />
               )}
+              
             </div>
           );
         })}
