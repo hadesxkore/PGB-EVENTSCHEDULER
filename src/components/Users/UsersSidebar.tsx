@@ -4,6 +4,7 @@ import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import EventCountBadge from '@/components/ui/event-count-badge';
 import { useEventCount } from '@/hooks/useEventCount';
+import { useUnreadMessages } from '@/hooks/useUnreadMessages';
 import { 
   Calendar, 
   CalendarDays,
@@ -68,9 +69,31 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
   // Use event count hook for My Calendar badge
   const { getTotalEventCount } = useEventCount({
     userDepartment: currentUser.department,
-    filterByDepartment: true,
     includeAllStatuses: false
   });
+
+  // Re-enable global unread messages hook for real-time badge updates
+  const validUserId = currentUser.id !== "unknown" ? currentUser.id : undefined;
+  const { totalUnreadCount: totalUnreadMessages, isLoading: unreadLoading } = useUnreadMessages(validUserId);
+  
+  // Debug the hook results
+  console.log('🔧 UsersSidebar - Unread Messages Hook Results:', {
+    currentUserId: currentUser.id,
+    validUserId,
+    totalUnreadMessages,
+    unreadLoading,
+    currentUserDepartment: currentUser.department
+  });
+
+  // Track badge count changes in real-time
+  useEffect(() => {
+    console.log('🔔 SIDEBAR BADGE COUNT CHANGED:', {
+      newCount: totalUnreadMessages,
+      isLoading: unreadLoading,
+      timestamp: new Date().toLocaleTimeString(),
+      userId: currentUser.id
+    });
+  }, [totalUnreadMessages, unreadLoading, currentUser.id]);
 
 
   // API Configuration
@@ -141,7 +164,13 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
   const navigationItems = getNavigationItems();
 
   const handleNavigation = (href: string) => {
-    navigate(href);
+    console.log('🔧 Sidebar navigation clicked:', href);
+    try {
+      navigate(href);
+      console.log('✅ Navigation successful to:', href);
+    } catch (error) {
+      console.error('❌ Navigation failed:', error);
+    }
   };
 
   const handleLogout = () => {
@@ -189,6 +218,7 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
           const Icon = item.icon;
           const isActive = location.pathname === item.href;
           const isMyCalendar = item.label === 'My Calendar';
+          const isMessages = item.label === 'Messages';
           const totalEventCount = isMyCalendar ? getTotalEventCount() : 0;
           
           // Debug logging for sidebar badge
@@ -201,12 +231,27 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
               shouldShowBadge: totalEventCount > 0 && !isCollapsed
             });
           }
+
+          // Debug logging for messages badge
+          if (isMessages) {
+            console.log('🔧 Messages Badge Debug (Real-time Check):', {
+              isMessages,
+              totalUnreadMessages,
+              unreadLoading,
+              isCollapsed,
+              shouldShowBadge: totalUnreadMessages > 0 && !isCollapsed && !unreadLoading,
+              timestamp: new Date().toLocaleTimeString()
+            });
+          }
           
           return (
             <div key={item.label} className="relative">
               <Button
                 variant="ghost"
-                onClick={() => handleNavigation(item.href)}
+                onClick={() => {
+                  console.log('🖱️ Button clicked for:', item.label, 'href:', item.href);
+                  handleNavigation(item.href);
+                }}
                 className={`w-full h-10 transition-all duration-200 ${
                   isActive 
                     ? 'bg-blue-100 text-blue-700 border-r-2 border-blue-600'
@@ -235,6 +280,13 @@ const UsersSidebar: React.FC<UsersSidebarProps> = ({ user }) => {
                   position="top-right"
                   className="absolute -top-1 -right-1"
                 />
+              )}
+
+              {/* Unread Messages Badge for Messages */}
+              {isMessages && totalUnreadMessages > 0 && !isCollapsed && !unreadLoading && (
+                <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs px-1.5 py-0.5 min-w-[20px] h-5 flex items-center justify-center rounded-full">
+                  {totalUnreadMessages > 99 ? '99+' : totalUnreadMessages}
+                </div>
               )}
               
             </div>

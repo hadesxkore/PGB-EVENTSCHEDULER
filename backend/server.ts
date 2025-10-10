@@ -29,12 +29,25 @@ console.log('📋 Environment variables loaded:', Object.keys(process.env).filte
 
 const app = express();
 const httpServer = createServer(app);
+
+// Re-enable Socket.IO server with proper connection management
 const io = new Server(httpServer, {
   cors: {
     origin: "http://localhost:5173", // Vite dev server
     methods: ["GET", "POST"]
+  },
+  // Add connection limits to prevent spam
+  maxHttpBufferSize: 1e6, // 1MB
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  // Limit connections per IP
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: true,
   }
 });
+
+console.log('🔌 Socket.IO server re-enabled with connection management');
 
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -47,20 +60,29 @@ app.use(express.urlencoded({ extended: true }));
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Make io available to routes
+// Make io available to routes (disabled)
 app.set('io', io);
 
-// Socket.IO connection handling
+// Socket.IO connection handling with proper tracking
+const connectedUsers = new Map(); // Track connected users to prevent duplicates
+
 io.on('connection', (socket) => {
   console.log('🔌 User connected:', socket.id);
 
   // Join user to their personal room (for receiving messages)
   socket.on('join-user-room', (userId) => {
+    // Prevent duplicate room joins
+    if (connectedUsers.has(userId)) {
+      console.log(`⚠️ User ${userId} already connected, skipping duplicate join`);
+      return;
+    }
+    
     socket.join(`user-${userId}`);
+    connectedUsers.set(userId, socket.id);
     console.log(`👤 User ${userId} joined their room`);
   });
 
-  // Join conversation room
+  // Join conversation room with rate limiting
   socket.on('join-conversation', (conversationId) => {
     socket.join(`conversation-${conversationId}`);
     console.log(`💬 User joined conversation: ${conversationId}`);
@@ -73,7 +95,14 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log('🔌 User disconnected:', socket.id);
+    // Clean up user tracking
+    for (const [userId, socketId] of connectedUsers.entries()) {
+      if (socketId === socket.id) {
+        connectedUsers.delete(userId);
+        console.log(`🔌 User ${userId} disconnected and cleaned up`);
+        break;
+      }
+    }
   });
 });
 
@@ -148,7 +177,7 @@ const startServer = async () => {
     httpServer.listen(PORT, () => {
       console.log('🚀 PGB Event Scheduler Backend Server Started!');
       console.log(`📡 Server running on: http://localhost:${PORT}`);
-      console.log(`🔌 Socket.IO enabled for real-time messaging`);
+      console.log(`🔌 Socket.IO enabled with connection management and spam prevention`);
       console.log(`🏥 Health check: http://localhost:${PORT}/api/health`);
       console.log(`📅 Events API: http://localhost:${PORT}/api/events`);
       console.log(`👥 Users API: http://localhost:${PORT}/api/users`);

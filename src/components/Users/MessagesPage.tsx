@@ -95,6 +95,7 @@ import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useSocket } from '@/hooks/useSocket';
+import { useUnreadMessages } from '@/hooks/useUnreadMessages';
 
 interface User {
   id: string;
@@ -144,18 +145,22 @@ const MessagesPage: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const [isUploading, setIsUploading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const currentRoomRef = useRef<string | null>(null);
 
   // State for real event conversations
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
-
   const [messages, setMessages] = useState<{ [conversationId: string]: Message[] }>({});
   const [unreadCounts, setUnreadCounts] = useState<{ [conversationId: string]: number }>({});
 
-  // Initialize Socket.IO
+  // Re-enable Socket.IO for real-time messaging
   const { joinConversation, leaveConversation, onNewMessage, offNewMessage, onMessagesRead, offMessagesRead } = useSocket(currentUser?.id);
+
+  // Temporarily disable global unread messages hook to prevent duplicate API calls
+  // const { totalUnreadCount: globalUnreadCount } = useUnreadMessages(currentUser?.id);
+  const globalUnreadCount = 0; // Disabled for now
 
 
   // Get current user from localStorage
@@ -404,6 +409,8 @@ const MessagesPage: React.FC = () => {
     return count;
   };
 
+  // Note: Total unread count is now calculated globally by useUnreadMessages hook
+
   // Get selected conversation data
   const selectedConv = conversations.find(c => c.id === selectedConversation?.split('-')[0]);
   const selectedUserId = selectedConversation?.split('-')[1];
@@ -498,6 +505,11 @@ const MessagesPage: React.FC = () => {
       const token = localStorage.getItem('authToken');
       console.log(`👀 Marking conversation as read for eventId: ${eventId}, userId: ${userId}`);
       
+      // Get the current unread count before marking as read
+      const conversationId = `${eventId}-${userId}`;
+      const currentUnreadCount = unreadCounts[conversationId] || 0;
+      console.log(`📊 Current unread count for conversation ${conversationId}: ${currentUnreadCount}`);
+      
       const response = await fetch(`http://localhost:5000/api/messages/mark-conversation-read/${eventId}/${userId}`, {
         method: 'PUT',
         headers: {
@@ -507,24 +519,37 @@ const MessagesPage: React.FC = () => {
       });
 
       if (response.ok) {
-        const result = await response.json();
-        console.log(`✅ Marked ${result.data.markedCount} messages as read`);
+        const data = await response.json();
+        console.log('✅ Conversation marked as read:', data);
         
-        // Update local unread count to 0 for this conversation
-        const conversationId = `${eventId}-${userId}`;
+        // Update local unread counts
         setUnreadCounts(prev => ({
           ...prev,
           [conversationId]: 0
         }));
+
+        // 🔥 NOTIFY GLOBAL HOOK IMMEDIATELY via custom event
+        if (currentUnreadCount > 0) {
+          console.log(`🔥 Dispatching messagesReadGlobal event - readerId: ${currentUser?.id}, messageCount: ${currentUnreadCount}`);
+          window.dispatchEvent(new CustomEvent('messagesReadGlobal', {
+            detail: {
+              readerId: currentUser?.id,
+              messageCount: currentUnreadCount,
+              conversationId,
+              eventId,
+              userId
+            }
+          }));
+        }
       } else {
-        console.error('Failed to mark conversation as read:', response.status, response.statusText);
+        console.error('❌ Failed to mark conversation as read:', response.status);
       }
     } catch (error) {
-      console.error('Error marking conversation as read:', error);
+      console.error('❌ Error marking conversation as read:', error);
     }
   };
 
-  // Fetch messages for selected conversation
+  // Fetch messages for a conversation
   const fetchMessages = async (eventId: string, userId: string) => {
     try {
       const token = localStorage.getItem('authToken');
@@ -554,7 +579,7 @@ const MessagesPage: React.FC = () => {
     }
   };
 
-  // Load messages when conversation is selected
+  // Load messages when conversation is selected (with debouncing)
   useEffect(() => {
     if (selectedConversation && selectedConv && selectedUserId && typeof selectedUserId === 'string') {
       console.log('🔍 About to fetch messages with:', {
@@ -562,9 +587,15 @@ const MessagesPage: React.FC = () => {
         userId: selectedUserId,
         userIdType: typeof selectedUserId
       });
-      fetchMessages(selectedConv.eventId || selectedConv.id, selectedUserId);
-      // Mark messages as read when user actually opens the conversation
-      markConversationAsRead(selectedConv.eventId || selectedConv.id, selectedUserId);
+      
+      // Add debouncing to prevent multiple rapid API calls
+      const timeoutId = setTimeout(() => {
+        fetchMessages(selectedConv.eventId || selectedConv.id, selectedUserId);
+        // Mark messages as read when user actually opens the conversation
+        markConversationAsRead(selectedConv.eventId || selectedConv.id, selectedUserId);
+      }, 200);
+      
+      return () => clearTimeout(timeoutId);
     } else {
       console.log('🚨 Cannot fetch messages - invalid parameters:', {
         selectedConversation,
@@ -601,6 +632,7 @@ const MessagesPage: React.FC = () => {
 
     // Cleanup listener on unmount
     return () => {
+      // Re-enable proper cleanup for real-time functionality
       offNewMessage();
     };
   }, [onNewMessage, offNewMessage, selectedConversation]);
@@ -640,6 +672,7 @@ const MessagesPage: React.FC = () => {
 
     // Cleanup listener on unmount
     return () => {
+      // Re-enable proper cleanup for real-time functionality
       offMessagesRead();
     };
   }, [onMessagesRead, offMessagesRead, currentUser?.id]);
@@ -652,15 +685,39 @@ const MessagesPage: React.FC = () => {
     }
   }, [conversations.length, currentUser?.id]);
 
-  // Join/leave conversation rooms when selection changes
+  // Note: Badge count is now handled globally by useUnreadMessages hook
+
+  // Join/leave conversation rooms when selection changes (with proper tracking)
   useEffect(() => {
     if (selectedConversation && selectedConv && selectedUserId) {
       const conversationRoomId = `${selectedConv.eventId || selectedConv.id}-${currentUser?.id}-${selectedUserId}`;
-      joinConversation(conversationRoomId);
       
-      return () => {
-        leaveConversation(conversationRoomId);
-      };
+      // Only join if we're not already in this room
+      if (currentRoomRef.current !== conversationRoomId) {
+        // Leave previous room if exists
+        if (currentRoomRef.current) {
+          console.log(`🔄 Leaving previous room: ${currentRoomRef.current}`);
+          leaveConversation(currentRoomRef.current);
+        }
+        
+        // Join new room with debouncing
+        const timeoutId = setTimeout(() => {
+          console.log(`🔄 Joining conversation room: ${conversationRoomId}`);
+          joinConversation(conversationRoomId);
+          currentRoomRef.current = conversationRoomId;
+        }, 200);
+        
+        return () => {
+          clearTimeout(timeoutId);
+        };
+      }
+    } else {
+      // No conversation selected, leave current room
+      if (currentRoomRef.current) {
+        console.log(`🔄 Leaving room (no conversation): ${currentRoomRef.current}`);
+        leaveConversation(currentRoomRef.current);
+        currentRoomRef.current = null;
+      }
     }
   }, [selectedConversation, selectedConv, selectedUserId, currentUser?.id, joinConversation, leaveConversation]);
 
