@@ -263,6 +263,55 @@ router.post('/', authenticateToken, upload.fields([
     const savedEvent = await newEvent.save();
     await savedEvent.populate('createdBy', 'name email department');
 
+    // 🔔 REAL-TIME NOTIFICATION BROADCASTING
+    console.log('🔔 Broadcasting new event notification for:', savedEvent.eventTitle);
+    
+    // Get Socket.IO instance
+    const io = req.app.get('io');
+    if (io) {
+      // Determine who should receive notifications
+      const targetUsers = new Set<string>();
+      
+      // 1. Add requestor (event creator) for their own upcoming event notifications
+      if (userId) {
+        targetUsers.add(userId.toString());
+        console.log(`📤 Adding requestor ${userId} to notification targets`);
+      }
+      
+      // 2. Add users from tagged departments for tagged notifications
+      const taggedDepts = savedEvent.taggedDepartments || [];
+      console.log(`🏢 Tagged departments:`, taggedDepts);
+      
+      // For now, we'll broadcast to all connected users in tagged departments
+      // In a real system, you'd query users by department from the database
+      
+      // Broadcast new notification event to all relevant users
+      targetUsers.forEach(targetUserId => {
+        io.to(`user-${targetUserId}`).emit('new-notification', {
+          eventId: savedEvent._id,
+          eventTitle: savedEvent.eventTitle,
+          notificationType: 'upcoming',
+          timestamp: new Date(),
+          message: `New event "${savedEvent.eventTitle}" has been created`
+        });
+        console.log(`🔔 Sent new-notification to user-${targetUserId}`);
+      });
+      
+      // Also broadcast to all connected clients (for tagged department users)
+      io.emit('new-notification', {
+        eventId: savedEvent._id,
+        eventTitle: savedEvent.eventTitle,
+        notificationType: 'tagged',
+        timestamp: new Date(),
+        taggedDepartments: taggedDepts,
+        message: `New event "${savedEvent.eventTitle}" has tagged your department`
+      });
+      
+      console.log(`🔄 Broadcasted new-notification event to all clients for event: ${savedEvent.eventTitle}`);
+    } else {
+      console.log('⚠️ Socket.IO not available for broadcasting');
+    }
+
     res.status(201).json({
       success: true,
       message: 'Event request submitted successfully',

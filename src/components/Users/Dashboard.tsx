@@ -16,14 +16,15 @@ import {
   ArrowRight,
   Clock,
   MapPin,
-  CheckCircle,
   AlertCircle,
-  Tag,
   X
 } from 'lucide-react';
 import axios from 'axios';
+import { useSocket } from '@/hooks/useSocket';
+import { Toaster } from 'sonner';
 
 const API_BASE_URL = 'http://localhost:5000/api';
+
 
 interface Event {
   _id: string;
@@ -36,8 +37,8 @@ interface Event {
   endDate: string;
   endTime: string;
   status: string;
-  participants: number;
-  taggedDepartments: string[];
+  taggedDepartments?: string[];
+  createdBy?: string;
 }
 
 interface Notification {
@@ -48,18 +49,29 @@ interface Notification {
   category: string;
   time: string;
   read: boolean;
-  icon: any;
+  icon: React.ComponentType<{ className?: string }>;
   iconColor: string;
   eventId?: string;
 }
 
 const Dashboard: React.FC = () => {
-  const [notificationOpen, setNotificationOpen] = useState(false);
-  const [upcomingEvents, setUpcomingEvents] = useState<Event[]>([]);
+  console.log('🏠 Dashboard component loaded/re-rendered');
+  
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [upcomingEvents, setUpcomingEvents] = useState<Event[]>([]);
   const [totalUserEvents, setTotalUserEvents] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [readNotifications, setReadNotifications] = useState<Set<string>>(new Set());
   const [totalSystemEvents, setTotalSystemEvents] = useState(0);
+  const [forceUpdate, setForceUpdate] = useState(0);
+  
+  // Get current user data
+  const currentUser = JSON.parse(localStorage.getItem('userData') || '{}');
+  const userId = currentUser._id || currentUser.id || 'unknown';
+  
+  // Initialize Socket.IO for real-time notifications
+  const { onNewNotification, offNewNotification, onNotificationRead, offNotificationRead } = useSocket(userId);
 
   // Helper function to format time
   const formatTime = (time: string) => {
@@ -82,24 +94,51 @@ const Dashboard: React.FC = () => {
     const diffTime = event.getTime() - today.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
+    console.log(`📅 Date calculation:`, {
+      today: today.toISOString().split('T')[0],
+      eventDate: eventDate,
+      eventParsed: event.toISOString().split('T')[0],
+      diffTime,
+      diffDays
+    });
+    
     return diffDays;
   };
 
   // Helper function to generate notification message
-  const generateNotificationMessage = (event: Event, isUserEvent: boolean): string => {
+  const generateNotificationMessage = (event: Event, isUserEvent: boolean, isTaggedEvent: boolean = false): string => {
     const daysUntil = getDaysUntilEvent(event.startDate);
     const formattedTime = formatTime(event.startTime);
+    
+    // Truncate event title if too long (max 40 characters)
+    const truncatedTitle = event.eventTitle.length > 40 
+      ? event.eventTitle.substring(0, 40) + "..." 
+      : event.eventTitle;
+    
+    // Different message format for tagged events
+    if (isTaggedEvent) {
+      return `New event "${truncatedTitle}" has tagged your department`;
+    }
+    
     const eventPrefix = isUserEvent ? "Your event" : "Event";
     const departmentInfo = isUserEvent ? "" : ` (${event.requestorDepartment || 'Unknown Dept'})`;
     
+    
+    console.log(`📝 Event title truncation:`, {
+      originalTitle: event.eventTitle,
+      originalLength: event.eventTitle.length,
+      truncatedTitle: truncatedTitle,
+      wasTruncated: event.eventTitle.length > 40
+    });
+    
     if (daysUntil === 1) {
-      return `${eventPrefix} "${event.eventTitle}"${departmentInfo} is tomorrow at ${formattedTime}`;
+      return `${eventPrefix} "${truncatedTitle}"${departmentInfo} is tomorrow at ${formattedTime}`;
     } else if (daysUntil === 2) {
-      return `${eventPrefix} "${event.eventTitle}"${departmentInfo} is coming in 2 days at ${formattedTime}`;
+      return `${eventPrefix} "${truncatedTitle}"${departmentInfo} is coming in 2 days at ${formattedTime}`;
     } else if (daysUntil > 0 && daysUntil <= 7) {
-      return `${eventPrefix} "${event.eventTitle}"${departmentInfo} is coming in ${daysUntil} days at ${formattedTime}`;
+      return `${eventPrefix} "${truncatedTitle}"${departmentInfo} is coming in ${daysUntil} days at ${formattedTime}`;
     }
-    return `${eventPrefix} "${event.eventTitle}"${departmentInfo} is scheduled for ${event.startDate} at ${formattedTime}`;
+    return `${eventPrefix} "${truncatedTitle}"${departmentInfo} is scheduled for ${event.startDate} at ${formattedTime}`;
   };
 
   // Generate notifications from upcoming events
@@ -109,29 +148,60 @@ const Dashboard: React.FC = () => {
     const userName = currentUser.name || '';
     
     console.log(`🔔 Filtering notifications for user: ${userName}, department: ${userDepartment}`);
+    console.log(`📊 Processing ${events.length} events for notifications`);
+    console.log(`🔍 Current user data from localStorage:`, currentUser);
     
     return events
       .filter(event => {
         const daysUntil = getDaysUntilEvent(event.startDate);
         const isUpcoming = daysUntil >= 0 && daysUntil <= 7;
         
-        if (!isUpcoming) return false;
+        console.log(`📅 Event "${event.eventTitle}" analysis:`, {
+          startDate: event.startDate,
+          daysUntil,
+          isUpcoming,
+          status: event.status
+        });
+        
+        if (!isUpcoming) {
+          console.log(`⏭️ Skipping "${event.eventTitle}" - not upcoming (${daysUntil} days)`);
+          return false;
+        }
         
         // Only show notifications for:
-        // 1. Events created by the current user
+        // 1. Events created by the current user (flexible name matching)
         // 2. Events where the user's department is specifically tagged
-        const isUserEvent = event.requestor === userName;
-        const isTaggedForUserDepartment = event.taggedDepartments?.includes(userDepartment);
+        // 3. If user name is empty, show all events for their department
+        const isUserEvent = userName && event.requestor === userName;
         
-        const shouldShow = isUserEvent || isTaggedForUserDepartment;
+        console.log(`🔍 User matching debug for "${event.eventTitle}":`, {
+          eventRequestor: event.requestor,
+          currentUserName: userName,
+          currentUserId: userId,
+          eventCreatedBy: event.createdBy,
+          isUserEvent: isUserEvent,
+          isUserEventById: event.createdBy === userId
+        });
+        const isTaggedForUserDepartment = userDepartment && event.taggedDepartments?.includes(userDepartment);
+        const isFromSameDepartment = userDepartment && event.requestorDepartment === userDepartment;
         
-        console.log(`📅 Event "${event.eventTitle}":`, {
+        // Also check if user created the event by ID (more reliable than name matching)
+        const isUserEventById = event.createdBy === userId;
+        
+        // If no user name, show events from same department or tagged department
+        const shouldShow = isUserEvent || isUserEventById || isTaggedForUserDepartment || (!userName && isFromSameDepartment);
+        
+        console.log(`🔍 Event "${event.eventTitle}" filtering:`, {
           requestor: event.requestor,
           requestorDepartment: event.requestorDepartment,
           taggedDepartments: event.taggedDepartments,
+          currentUserName: userName,
+          currentUserDepartment: userDepartment,
           isUserEvent,
           isTaggedForUserDepartment,
-          shouldShow
+          isFromSameDepartment,
+          shouldShow,
+          daysUntil
         });
         
         return shouldShow;
@@ -139,14 +209,47 @@ const Dashboard: React.FC = () => {
       .map(event => {
         const currentUser = JSON.parse(localStorage.getItem('userData') || '{}');
         const userName = currentUser.name || '';
-        const isUserEvent = event.requestor === userName;
+        const userDepartment = currentUser.department || currentUser.departmentName || '';
+        const userId = currentUser._id || currentUser.id || 'unknown';
+        
+        const isUserEvent = userName && event.requestor === userName;
+        const isUserEventById = event.createdBy === userId;
+        const isTaggedForUserDepartment = userDepartment && event.taggedDepartments?.includes(userDepartment);
+        const isFromSameDepartment = userDepartment && event.requestorDepartment === userDepartment;
+        
+        // Determine category based on how the user is related to the event
+        let category = "upcoming";
+        let title = "Upcoming Event";
+        
+        if (isUserEvent || isUserEventById) {
+          category = "upcoming";
+          title = "Your Upcoming Event";
+        } else if (isTaggedForUserDepartment) {
+          category = "tagged";
+          title = "New Event Notification";  // This matches your screenshot
+        } else if (isFromSameDepartment || !userName) {
+          // If from same department or no user name, treat as upcoming
+          category = "upcoming";
+          title = "Upcoming Event";
+        }
+        
+        console.log(`📂 Event "${event.eventTitle}" categorization:`, {
+          isUserEvent,
+          isTaggedForUserDepartment,
+          isFromSameDepartment,
+          category,
+          title,
+          taggedDepartments: event.taggedDepartments,
+          requestorDepartment: event.requestorDepartment,
+          userDepartment
+        });
         
         return {
-          id: `upcoming-${event._id}`,
-          title: isUserEvent ? "Your Upcoming Event" : "Tagged Event",
-          message: generateNotificationMessage(event, isUserEvent),
+          id: `upcoming-${event._id}-${userId}`,
+          title: title,
+          message: generateNotificationMessage(event, isUserEvent || isUserEventById, isTaggedForUserDepartment),
           type: "upcoming",
-          category: isUserEvent ? "upcoming" : "tagged",
+          category: category,
           time: getDaysUntilEvent(event.startDate) === 1 ? "Tomorrow" : 
                 getDaysUntilEvent(event.startDate) === 2 ? "In 2 days" :
                 `In ${getDaysUntilEvent(event.startDate)} days`,
@@ -211,7 +314,14 @@ const Dashboard: React.FC = () => {
           
           console.log(`📊 User Events: ${userEvents.length}, System Events: ${allEvents.length}`);
           console.log(`📅 Found ${upcoming.length} user's upcoming events`);
-          console.log(`🔔 Generated ${eventNotifications.length} notifications from all events`);
+          console.log(`🔔 Generated ${eventNotifications.length} notifications from ${allUpcoming.length} upcoming events`);
+          console.log(`🎯 Current date: ${new Date().toISOString().split('T')[0]}`);
+          console.log(`🎯 Looking for events on: 2025-10-11 (tomorrow)`);
+          
+          // Debug: Show all upcoming events with their dates
+          allUpcoming.forEach((event: Event) => {
+            console.log(`📅 Upcoming event: "${event.eventTitle}" on ${event.startDate} (${getDaysUntilEvent(event.startDate)} days)`);
+          });
         }
       }
     } catch (error) {
@@ -223,10 +333,183 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  // Load read notifications from database
+  const loadReadNotifications = async () => {
+    try {
+      const token = localStorage.getItem('authToken');
+      const response = await axios.get(`${API_BASE_URL}/notifications/read-status`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.data.success) {
+        setReadNotifications(new Set(response.data.data));
+        console.log(`📖 Loaded ${response.data.data.length} read notifications from database`);
+      }
+    } catch (error) {
+      console.error('Error loading read notifications:', error);
+      // Fallback to localStorage for backward compatibility
+      const savedReadNotifications = localStorage.getItem(`readNotifications_${userId}`);
+      if (savedReadNotifications) {
+        setReadNotifications(new Set(JSON.parse(savedReadNotifications)));
+        console.log('📖 Loaded read notifications from localStorage fallback');
+      }
+    }
+  };
+
+  // Mark notification as read in database
+  const markNotificationAsRead = async (notificationId: string) => {
+    try {
+      // Find the notification to get its details
+      const notification = notifications.find(n => n.id === notificationId);
+      if (!notification) {
+        console.error('Notification not found:', notificationId);
+        return;
+      }
+
+      // Optimistically update UI
+      const newReadSet = new Set(readNotifications);
+      newReadSet.add(notificationId);
+      setReadNotifications(newReadSet);
+
+      // Save to database
+      const token = localStorage.getItem('authToken');
+      const response = await axios.post(`${API_BASE_URL}/notifications/mark-read`, {
+        notificationId,
+        eventId: notification.eventId,
+        notificationType: notification.type,
+        category: notification.category
+      }, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (response.data.success) {
+        console.log(`✅ Marked notification as read in database: ${notificationId}`);
+        
+        // Dispatch global event for immediate UI updates
+        window.dispatchEvent(new CustomEvent('notificationUpdate', { 
+          detail: { type: 'read', notificationId, userId } 
+        }));
+      } else {
+        // Rollback on failure
+        const rollbackSet = new Set(readNotifications);
+        rollbackSet.delete(notificationId);
+        setReadNotifications(rollbackSet);
+        console.error('Failed to mark notification as read:', response.data.message);
+      }
+    } catch (error) {
+      // Rollback on error
+      const rollbackSet = new Set(readNotifications);
+      rollbackSet.delete(notificationId);
+      setReadNotifications(rollbackSet);
+      console.error('Error marking notification as read:', error);
+    }
+  };
+
+  // Get unread notification count
+  const getUnreadCount = (notificationsList: Notification[]) => {
+    return notificationsList.filter(n => !readNotifications.has(n.id)).length;
+  };
+
+
+
+
   // Fetch data on component mount
   useEffect(() => {
     fetchEventsAndNotifications();
+    loadReadNotifications();
   }, []);
+
+  console.log('🔧 About to set up notification listeners useEffect...');
+  
+  // Real-time notification listeners
+  useEffect(() => {
+    console.log('🔔 Setting up real-time notification listeners for userId:', userId);
+    console.log('🔍 Socket functions available:', {
+      onNewNotification: typeof onNewNotification,
+      offNewNotification: typeof offNewNotification,
+      onNotificationRead: typeof onNotificationRead,
+      offNotificationRead: typeof offNotificationRead
+    });
+    
+    // Check if functions are actually available
+    if (!onNewNotification || !onNotificationRead) {
+      console.error('❌ Socket functions not available!', {
+        onNewNotification: !!onNewNotification,
+        onNotificationRead: !!onNotificationRead
+      });
+      return;
+    }
+
+    // Listen for new notifications
+    const handleNewNotification = (data: any) => {
+      console.log('🔔 Received new notification:', data);
+      console.log('🔄 Current notification state before update:', {
+        notificationCount: notifications.length,
+        unreadCount: getUnreadCount(notifications),
+        readNotificationsSize: readNotifications.size
+      });
+      
+      // Force immediate refresh of notifications and events
+      console.log('🔄 Triggering immediate notification refresh...');
+      fetchEventsAndNotifications().then(() => {
+        console.log('✅ Immediate refresh completed');
+        console.log('🔄 New notification state:', {
+          notificationCount: notifications.length,
+          unreadCount: getUnreadCount(notifications)
+        });
+      });
+      
+      // Also trigger delayed refresh to ensure backend processing is complete
+      setTimeout(() => {
+        console.log('🔄 Executing delayed notification refresh...');
+        fetchEventsAndNotifications().then(() => {
+          console.log('✅ Delayed refresh completed');
+          loadReadNotifications();
+        });
+      }, 1000); // Increased delay to ensure backend processing is complete
+      
+      // Force UI update
+      setForceUpdate(prev => prev + 1);
+      
+      // Dispatch global event for other components (like sidebar badge)
+      window.dispatchEvent(new CustomEvent('notificationUpdate', { 
+        detail: { type: 'new', data } 
+      }));
+    };
+
+    // Listen for notification read events (from other devices/sessions)
+    const handleNotificationRead = (data: any) => {
+      console.log('👀 Received notification read event:', data);
+      if (data.userId === userId) {
+        // Update read status if it's for current user
+        setReadNotifications(prev => {
+          const newSet = new Set(prev);
+          newSet.add(data.notificationId);
+          return newSet;
+        });
+        
+        // Dispatch global event for read status update
+        window.dispatchEvent(new CustomEvent('notificationUpdate', { 
+          detail: { type: 'read', data } 
+        }));
+      }
+    };
+
+    // Set up listeners
+    console.log('🔧 Calling onNewNotification...');
+    onNewNotification(handleNewNotification);
+    console.log('🔧 Calling onNotificationRead...');
+    onNotificationRead(handleNotificationRead);
+    console.log('✅ Notification listeners setup complete');
+
+    // Cleanup listeners on unmount
+    return () => {
+      console.log('🔕 Cleaning up notification listeners');
+      offNewNotification();
+      offNotificationRead();
+    };
+  }, [userId]); // Remove function dependencies to prevent infinite re-renders
+
 
   return (
     <div className="space-y-6">
@@ -242,12 +525,12 @@ const Dashboard: React.FC = () => {
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="icon" className="relative">
               <Bell className="h-5 w-5" />
-              {notifications.length > 0 && (
+              {getUnreadCount(notifications) > 0 && (
                 <span className="absolute -top-1 -right-1 h-3 w-3 bg-red-500 rounded-full"></span>
               )}
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-80 p-0" align="end">
+          <DropdownMenuContent className="w-96 p-0" align="end">
             <div className="p-3 border-b">
               <div className="flex items-center justify-between">
                 <h3 className="font-medium text-sm">Notifications</h3>
@@ -259,36 +542,36 @@ const Dashboard: React.FC = () => {
             
             <Tabs defaultValue="all" className="w-full">
               <div className="px-3 pt-2">
-                <TabsList className="grid w-full grid-cols-4 h-8">
-                  <TabsTrigger value="all" className="text-xs relative">
+                <TabsList className="grid w-full grid-cols-4 h-9 gap-1">
+                  <TabsTrigger value="all" className="text-xs relative px-2">
                     All
-                    {notifications.length > 0 && (
-                      <Badge variant="destructive" className="ml-1 h-4 min-w-4 text-xs px-1">
-                        {notifications.length}
+                    {getUnreadCount(notifications) > 0 && (
+                      <Badge variant="destructive" className="ml-1 h-3 min-w-3 text-[10px] px-1">
+                        {getUnreadCount(notifications)}
                       </Badge>
                     )}
                   </TabsTrigger>
-                  <TabsTrigger value="upcoming" className="text-xs relative">
+                  <TabsTrigger value="upcoming" className="text-xs relative px-2">
                     Upcoming
-                    {notifications.filter(n => n.category === 'upcoming').length > 0 && (
-                      <Badge variant="destructive" className="ml-1 h-4 min-w-4 text-xs px-1">
-                        {notifications.filter(n => n.category === 'upcoming').length}
+                    {getUnreadCount(notifications.filter(n => n.category === 'upcoming')) > 0 && (
+                      <Badge variant="destructive" className="ml-1 h-3 min-w-3 text-[10px] px-1">
+                        {getUnreadCount(notifications.filter(n => n.category === 'upcoming'))}
                       </Badge>
                     )}
                   </TabsTrigger>
-                  <TabsTrigger value="tagged" className="text-xs relative">
+                  <TabsTrigger value="tagged" className="text-xs relative px-2">
                     Tagged
-                    {notifications.filter(n => n.category === 'tagged').length > 0 && (
-                      <Badge variant="destructive" className="ml-1 h-4 min-w-4 text-xs px-1">
-                        {notifications.filter(n => n.category === 'tagged').length}
+                    {getUnreadCount(notifications.filter(n => n.category === 'tagged')) > 0 && (
+                      <Badge variant="destructive" className="ml-1 h-3 min-w-3 text-[10px] px-1">
+                        {getUnreadCount(notifications.filter(n => n.category === 'tagged'))}
                       </Badge>
                     )}
                   </TabsTrigger>
-                  <TabsTrigger value="status" className="text-xs relative">
+                  <TabsTrigger value="status" className="text-xs relative px-2">
                     Status
-                    {notifications.filter(n => n.category === 'status').length > 0 && (
-                      <Badge variant="destructive" className="ml-1 h-4 min-w-4 text-xs px-1">
-                        {notifications.filter(n => n.category === 'status').length}
+                    {getUnreadCount(notifications.filter(n => n.category === 'status')) > 0 && (
+                      <Badge variant="destructive" className="ml-1 h-3 min-w-3 text-[10px] px-1">
+                        {getUnreadCount(notifications.filter(n => n.category === 'status'))}
                       </Badge>
                     )}
                   </TabsTrigger>
@@ -311,22 +594,31 @@ const Dashboard: React.FC = () => {
                     ) : (
                       notifications.map((notification) => {
                         const IconComponent = notification.icon;
+                        const isRead = readNotifications.has(notification.id);
                         return (
-                          <div key={notification.id} className={`p-3 hover:bg-gray-50 transition-colors border-l-2 ${
-                            !notification.read ? 'border-l-blue-500 bg-blue-50/20' : 'border-l-transparent'
-                          }`}>
+                          <div 
+                            key={notification.id} 
+                            className={`p-3 hover:bg-gray-50 transition-colors border-l-2 cursor-pointer ${
+                              !isRead ? 'border-l-blue-500 bg-blue-50/30' : 'border-l-transparent bg-gray-50/50'
+                            }`}
+                            onClick={() => markNotificationAsRead(notification.id)}
+                          >
                             <div className="flex items-start gap-2">
                               <div className={`p-1 rounded ${notification.iconColor}`}>
                                 <IconComponent className="h-3 w-3" />
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-start justify-between">
-                                  <h4 className="font-medium text-xs text-gray-900 leading-tight">{notification.title}</h4>
+                                  <h4 className={`font-medium text-xs leading-tight ${
+                                    !isRead ? 'text-gray-900' : 'text-gray-600'
+                                  }`}>{notification.title}</h4>
                                   <span className="text-xs text-gray-400 ml-2 flex-shrink-0">{notification.time}</span>
                                 </div>
-                                <p className="text-xs text-gray-600 mt-1 leading-relaxed">{notification.message}</p>
-                                {!notification.read && (
-                                  <Badge variant="secondary" className="text-xs mt-1 h-4 px-1">New</Badge>
+                                <p className={`text-xs mt-1 leading-relaxed ${
+                                  !isRead ? 'text-gray-600' : 'text-gray-500'
+                                }`}>{notification.message}</p>
+                                {!isRead && (
+                                  <Badge variant="destructive" className="text-xs mt-1 h-4 px-1">New</Badge>
                                 )}
                               </div>
                             </div>
@@ -341,23 +633,32 @@ const Dashboard: React.FC = () => {
                   <div className="space-y-1">
                     {notifications.filter(n => n.category === 'upcoming').map((notification) => {
                       const IconComponent = notification.icon;
+                      const isRead = readNotifications.has(notification.id);
                       return (
-                        <div key={notification.id} className={`p-4 hover:bg-gray-50 transition-colors border-l-4 ${
-                          !notification.read ? 'border-l-blue-500 bg-blue-50/30' : 'border-l-transparent'
-                        }`}>
+                        <div 
+                          key={notification.id} 
+                          className={`p-4 hover:bg-gray-50 transition-colors border-l-4 cursor-pointer ${
+                            !isRead ? 'border-l-blue-500 bg-blue-50/30' : 'border-l-transparent bg-gray-50/50'
+                          }`}
+                          onClick={() => markNotificationAsRead(notification.id)}
+                        >
                           <div className="flex items-start gap-3">
                             <div className={`p-2 rounded-lg bg-gray-100 ${notification.iconColor}`}>
                               <IconComponent className="h-4 w-4" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center justify-between">
-                                <h4 className="font-medium text-sm text-gray-900">{notification.title}</h4>
+                                <h4 className={`font-medium text-sm ${
+                                  !isRead ? 'text-gray-900' : 'text-gray-600'
+                                }`}>{notification.title}</h4>
                                 <span className="text-xs text-gray-500">{notification.time}</span>
                               </div>
-                              <p className="text-sm text-gray-600 mt-1">{notification.message}</p>
-                              {!notification.read && (
+                              <p className={`text-sm mt-1 ${
+                                !isRead ? 'text-gray-600' : 'text-gray-500'
+                              }`}>{notification.message}</p>
+                              {!isRead && (
                                 <div className="mt-2">
-                                  <Badge variant="secondary" className="text-xs">New</Badge>
+                                  <Badge variant="destructive" className="text-xs">New</Badge>
                                 </div>
                               )}
                             </div>
@@ -372,23 +673,32 @@ const Dashboard: React.FC = () => {
                   <div className="space-y-1">
                     {notifications.filter(n => n.category === 'tagged').map((notification) => {
                       const IconComponent = notification.icon;
+                      const isRead = readNotifications.has(notification.id);
                       return (
-                        <div key={notification.id} className={`p-4 hover:bg-gray-50 transition-colors border-l-4 ${
-                          !notification.read ? 'border-l-blue-500 bg-blue-50/30' : 'border-l-transparent'
-                        }`}>
+                        <div 
+                          key={notification.id} 
+                          className={`p-4 hover:bg-gray-50 transition-colors border-l-4 cursor-pointer ${
+                            !isRead ? 'border-l-blue-500 bg-blue-50/30' : 'border-l-transparent bg-gray-50/50'
+                          }`}
+                          onClick={() => markNotificationAsRead(notification.id)}
+                        >
                           <div className="flex items-start gap-3">
                             <div className={`p-2 rounded-lg bg-gray-100 ${notification.iconColor}`}>
                               <IconComponent className="h-4 w-4" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center justify-between">
-                                <h4 className="font-medium text-sm text-gray-900">{notification.title}</h4>
+                                <h4 className={`font-medium text-sm ${
+                                  !isRead ? 'text-gray-900' : 'text-gray-600'
+                                }`}>{notification.title}</h4>
                                 <span className="text-xs text-gray-500">{notification.time}</span>
                               </div>
-                              <p className="text-sm text-gray-600 mt-1">{notification.message}</p>
-                              {!notification.read && (
+                              <p className={`text-sm mt-1 ${
+                                !isRead ? 'text-gray-600' : 'text-gray-500'
+                              }`}>{notification.message}</p>
+                              {!isRead && (
                                 <div className="mt-2">
-                                  <Badge variant="secondary" className="text-xs">New</Badge>
+                                  <Badge variant="destructive" className="text-xs">New</Badge>
                                 </div>
                               )}
                             </div>
@@ -403,23 +713,32 @@ const Dashboard: React.FC = () => {
                   <div className="space-y-1">
                     {notifications.filter(n => n.category === 'status').map((notification) => {
                       const IconComponent = notification.icon;
+                      const isRead = readNotifications.has(notification.id);
                       return (
-                        <div key={notification.id} className={`p-4 hover:bg-gray-50 transition-colors border-l-4 ${
-                          !notification.read ? 'border-l-blue-500 bg-blue-50/30' : 'border-l-transparent'
-                        }`}>
+                        <div 
+                          key={notification.id} 
+                          className={`p-4 hover:bg-gray-50 transition-colors border-l-4 cursor-pointer ${
+                            !isRead ? 'border-l-blue-500 bg-blue-50/30' : 'border-l-transparent bg-gray-50/50'
+                          }`}
+                          onClick={() => markNotificationAsRead(notification.id)}
+                        >
                           <div className="flex items-start gap-3">
                             <div className={`p-2 rounded-lg bg-gray-100 ${notification.iconColor}`}>
                               <IconComponent className="h-4 w-4" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center justify-between">
-                                <h4 className="font-medium text-sm text-gray-900">{notification.title}</h4>
+                                <h4 className={`font-medium text-sm ${
+                                  !isRead ? 'text-gray-900' : 'text-gray-600'
+                                }`}>{notification.title}</h4>
                                 <span className="text-xs text-gray-500">{notification.time}</span>
                               </div>
-                              <p className="text-sm text-gray-600 mt-1">{notification.message}</p>
-                              {!notification.read && (
+                              <p className={`text-sm mt-1 ${
+                                !isRead ? 'text-gray-600' : 'text-gray-500'
+                              }`}>{notification.message}</p>
+                              {!isRead && (
                                 <div className="mt-2">
-                                  <Badge variant="secondary" className="text-xs">New</Badge>
+                                  <Badge variant="destructive" className="text-xs">New</Badge>
                                 </div>
                               )}
                             </div>
@@ -556,6 +875,22 @@ const Dashboard: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+      
+      {/* Separate Toaster for popup notifications only */}
+      <Toaster 
+        position="bottom-right" 
+        richColors 
+        closeButton 
+        duration={5000}
+        toastOptions={{
+          style: {
+            background: 'white',
+            border: '1px solid #e5e7eb',
+            borderRadius: '8px',
+            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+          },
+        }}
+      />
     </div>
   );
 };

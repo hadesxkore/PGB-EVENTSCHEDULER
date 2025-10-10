@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
+import GlobalNotificationSystem from './components/GlobalNotificationSystem'
 import LoginForm from './components/LoginForm'
 import MainLayout from './components/Users/MainLayout'
 import Dashboard from './components/Users/Dashboard'
@@ -32,6 +33,7 @@ function App() {
 
   return (
     <>
+      <GlobalNotificationSystem />
       <Router>
         <Routes>
           {/* Login Route */}

@@ -307,31 +307,20 @@ const MyEventsPage: React.FC = () => {
     const startDate = new Date(event.startDate);
     startDate.setHours(0, 0, 0, 0); // Set to start of day
     
-    console.log('Event:', event.eventTitle);
-    console.log('Current Date:', currentDate.toDateString());
-    console.log('Start Date:', startDate.toDateString());
-    console.log('End Date:', endDate.toDateString());
-    console.log('Original Status:', event.status);
-    
     // If event has ended, mark as completed (unless it's rejected or cancelled)
     if (currentDate > endDate && event.status !== 'rejected' && event.status !== 'cancelled') {
-      console.log('→ Marking as completed');
       return 'completed';
     }
     
     // If event is approved/submitted and starts in the future, mark as incoming
     if ((event.status === 'approved' || event.status === 'submitted') && startDate > currentDate) {
-      console.log('→ Marking as incoming');
       return 'incoming';
     }
     
     // If event is happening today or ongoing (approved/submitted), mark as ongoing
     if ((event.status === 'approved' || event.status === 'submitted') && startDate <= currentDate && currentDate <= endDate) {
-      console.log('→ Marking as ongoing');
       return 'ongoing';
     }
-    
-    console.log('→ Keeping original status:', event.status);
     return event.status;
   };
 

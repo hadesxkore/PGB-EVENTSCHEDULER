@@ -1030,10 +1030,18 @@ const RequestEventPage: React.FC = () => {
       formDataToSubmit.append('multipleLocations', formData.multipleLocations.toString());
       formDataToSubmit.append('description', formData.description || '');
       
-      // Schedule information
-      formDataToSubmit.append('startDate', formData.startDate?.toISOString() || '');
+      // Schedule information - Use date-only format to avoid timezone issues
+      const formatDateOnly = (date: Date | null | undefined) => {
+        if (!date) return '';
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+      
+      formDataToSubmit.append('startDate', formatDateOnly(formData.startDate));
       formDataToSubmit.append('startTime', formData.startTime);
-      formDataToSubmit.append('endDate', formData.endDate?.toISOString() || '');
+      formDataToSubmit.append('endDate', formatDateOnly(formData.endDate));
       formDataToSubmit.append('endTime', formData.endTime);
       
       // Contact information
@@ -1096,6 +1104,13 @@ const RequestEventPage: React.FC = () => {
       console.log('🔍 Selected requirements only:', selectedRequirementsOnly);
       console.log('🔍 Tagged departments:', formData.taggedDepartments);
       console.log('🔍 Form data keys:', Array.from(formDataToSubmit.keys()));
+      console.log('📅 Date formatting debug:', {
+        originalStartDate: formData.startDate,
+        formattedStartDate: formatDateOnly(formData.startDate),
+        originalEndDate: formData.endDate,
+        formattedEndDate: formatDateOnly(formData.endDate),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+      });
       
       const response = await axios.post(`${API_BASE_URL}/events`, formDataToSubmit, { headers });
 

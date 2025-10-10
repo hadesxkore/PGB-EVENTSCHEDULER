@@ -13,6 +13,7 @@ import resourceAvailabilityRoutes from './routes/resourceAvailability.js';
 import locationAvailabilityRoutes from './routes/locationAvailability.js';
 import departmentPermissionsRoutes from './routes/departmentPermissions.js';
 import messageRoutes from './routes/messages.js';
+import notificationRoutes from './routes/notifications.js';
 import { startScheduler, runCleanupNow } from './services/scheduler.js';
 
 // ES module __dirname equivalent
@@ -49,6 +50,9 @@ const io = new Server(httpServer, {
 
 console.log('🔌 Socket.IO server re-enabled with connection management');
 
+// Make Socket.IO instance available to routes
+app.set('io', io);
+
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI;
 
@@ -68,7 +72,6 @@ const connectedUsers = new Map(); // Track connected users to prevent duplicates
 
 io.on('connection', (socket) => {
   console.log('🔌 User connected:', socket.id);
-
   // Join user to their personal room (for receiving messages)
   socket.on('join-user-room', (userId) => {
     // Prevent duplicate room joins
@@ -76,10 +79,16 @@ io.on('connection', (socket) => {
       console.log(`⚠️ User ${userId} already connected, skipping duplicate join`);
       return;
     }
-    
+
     socket.join(`user-${userId}`);
     connectedUsers.set(userId, socket.id);
     console.log(`👤 User ${userId} joined their room`);
+  });
+
+  // Test connection handler
+  socket.on('test-connection', (data) => {
+    console.log('🧪 Test connection received:', data);
+    socket.emit('test-response', { message: 'Connection test successful', timestamp: new Date() });
   });
 
   // Join conversation room with rate limiting
@@ -114,6 +123,7 @@ app.use('/api/resource-availability', resourceAvailabilityRoutes);
 app.use('/api/location-availability', locationAvailabilityRoutes);
 app.use('/api/department-permissions', departmentPermissionsRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Health check route
 app.get('/api/health', (req, res) => {

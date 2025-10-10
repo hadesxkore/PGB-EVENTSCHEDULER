@@ -190,6 +190,79 @@ export const useSocket = (userId?: string) => {
     }
   };
 
+  // Notification event listeners
+  const onNewNotification = (callback: (data: any) => void) => {
+    console.log('🔔 Setting up new notification listener');
+    console.log('🔍 Socket state:', {
+      exists: !!socketRef.current,
+      connected: socketRef.current?.connected,
+      id: socketRef.current?.id,
+      globalSocketExists: !!globalSocket,
+      globalSocketConnected: globalSocket?.connected
+    });
+    
+    // Use global socket if socketRef is not available
+    const socket = socketRef.current || globalSocket;
+    
+    if (socket && socket.connected) {
+      socket.on('new-notification', callback);
+      console.log('🔔 Listening for new notifications (immediate)');
+    } else if (socket) {
+      console.log('⏳ Socket not connected, waiting for connection...');
+      socket.once('connect', () => {
+        socket.on('new-notification', callback);
+        console.log('🔔 Listening for new notifications (after connection)');
+      });
+    } else {
+      console.log('❌ No socket available for onNewNotification');
+      
+      // Retry after a short delay
+      setTimeout(() => {
+        console.log('🔄 Retrying notification listener setup...');
+        onNewNotification(callback);
+      }, 1000);
+    }
+  };
+
+  const offNewNotification = () => {
+    if (socketRef.current) {
+      socketRef.current.off('new-notification');
+      console.log('🔕 Stopped listening for new notifications');
+    }
+  };
+
+  const onNotificationRead = (callback: (data: any) => void) => {
+    console.log('👀 Setting up notification read listener');
+    
+    // Use global socket if socketRef is not available
+    const socket = socketRef.current || globalSocket;
+    
+    if (socket && socket.connected) {
+      socket.on('notification-read', callback);
+      console.log('👀 Listening for notification read events (immediate)');
+    } else if (socket) {
+      socket.once('connect', () => {
+        socket.on('notification-read', callback);
+        console.log('👀 Listening for notification read events (after connection)');
+      });
+    } else {
+      console.log('❌ No socket available for onNotificationRead');
+      
+      // Retry after a short delay
+      setTimeout(() => {
+        console.log('🔄 Retrying notification read listener setup...');
+        onNotificationRead(callback);
+      }, 1000);
+    }
+  };
+
+  const offNotificationRead = () => {
+    if (socketRef.current) {
+      socketRef.current.off('notification-read');
+      console.log('👀 Stopped listening for notification read events');
+    }
+  };
+
   return {
     socket: socketRef.current,
     joinConversation,
@@ -197,6 +270,10 @@ export const useSocket = (userId?: string) => {
     onNewMessage,
     offNewMessage,
     onMessagesRead,
-    offMessagesRead
+    offMessagesRead,
+    onNewNotification,
+    offNewNotification,
+    onNotificationRead,
+    offNotificationRead
   };
 };
