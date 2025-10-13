@@ -191,6 +191,11 @@ export default function GlobalNotificationSystem() {
         idMatch: `"${userId}" === "${notificationData.createdBy}" = ${userId === notificationData.createdBy}`
       });
       
+      // Dispatch global event to refresh Dashboard notifications
+      window.dispatchEvent(new CustomEvent('notificationUpdate', { 
+        detail: { type: 'new', data: notificationData } 
+      }));
+      
       // Create a custom toast with Framer Motion animation
       toast.custom((t) => (
         <motion.div

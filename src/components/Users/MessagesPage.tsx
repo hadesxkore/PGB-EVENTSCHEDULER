@@ -773,8 +773,6 @@ const MessagesPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Error sending file message:', error);
-    } finally {
-      setIsUploading(false);
     }
   };
 
@@ -782,7 +780,12 @@ const MessagesPage: React.FC = () => {
   const handleFileDownload = async (filePath: string, fileName: string) => {
     try {
       const token = localStorage.getItem('authToken');
-      const response = await fetch(`http://localhost:5000/api/messages/file/${filePath}`, {
+      
+      // Extract just the filename from the full path (handle both / and \ separators)
+      const filename = filePath.split(/[/\\]/).pop() || filePath;
+      console.log('📁 Downloading file:', { originalPath: filePath, extractedFilename: filename });
+      
+      const response = await fetch(`http://localhost:5000/api/messages/file/${filename}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }

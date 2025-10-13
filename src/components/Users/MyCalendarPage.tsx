@@ -3,15 +3,34 @@ import { motion } from 'framer-motion';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { toast } from 'sonner';
 import CustomCalendar, { type CalendarEvent } from '@/components/ui/custom-calendar';
 import RequirementAvailabilityModal from './RequirementAvailabilityModal';
 import { useEventCount } from '@/hooks/useEventCount';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
 import { 
   Calendar as CalendarIcon, 
   CheckCircle,
   XCircle,
-  Package
+  Package,
+  Settings,
+  Trash2,
+  X,
+  Shield
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 
 interface Requirement {
@@ -56,6 +75,20 @@ const MyCalendarPage: React.FC = () => {
   const [availabilityData, setAvailabilityData] = useState<ResourceAvailabilityData[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [showAvailableDialog, setShowAvailableDialog] = useState(false);
+  const [showUnavailableDialog, setShowUnavailableDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showSelectiveDateDeleteDialog, setShowSelectiveDateDeleteDialog] = useState(false);
+  const [selectedDatesForDeletion, setSelectedDatesForDeletion] = useState<string[]>([]);
+  const [isSelectingDatesMode, setIsSelectingDatesMode] = useState(false);
+  const [calendarCurrentMonth, setCalendarCurrentMonth] = useState(new Date());
+  
+  // Progress Modal States
+  const [showProgressModal, setShowProgressModal] = useState(false);
+  const [progressValue, setProgressValue] = useState(0);
+  const [progressText, setProgressText] = useState('');
+  const [progressOperation, setProgressOperation] = useState<'available' | 'unavailable' | 'delete' | ''>('');
 
   // Use the event count hook for badge functionality
   const { getEventCountForDate } = useEventCount({
@@ -404,14 +437,525 @@ const MyCalendarPage: React.FC = () => {
       }));
   };
 
-  // Calculate summary stats
+  // Get current and future dates in the calendar month being viewed (no past dates)
+  const getCurrentAndFutureDates = (): string[] => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Reset time to start of day
+    
+    // Use the calendar month being viewed, not the real current month
+    const viewedYear = calendarCurrentMonth.getFullYear();
+    const viewedMonth = calendarCurrentMonth.getMonth();
+    const daysInMonth = new Date(viewedYear, viewedMonth + 1, 0).getDate();
+    
+    const dates: string[] = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(viewedYear, viewedMonth, day);
+      // Only include current and future dates (no past dates)
+      if (date >= today) {
+        dates.push(format(date, 'yyyy-MM-dd'));
+      }
+    }
+    return dates;
+  };
+
+  // Bulk set all requirements available for current and future dates
+  const handleBulkSetAvailable = async () => {
+    if (!currentUser?.department || requirements.length === 0) {
+      toast.error('No requirements found for your department.');
+      return;
+    }
+
+    setShowAvailableDialog(false);
+    setBulkLoading(true);
+    
+    // Show progress modal
+    setProgressOperation('available');
+    setProgressValue(0);
+    setProgressText('Initializing...');
+    setShowProgressModal(true);
+    
+    try {
+      // Get department info
+      const departmentsResponse = await fetch('http://localhost:5000/api/departments/visible');
+      if (!departmentsResponse.ok) {
+        throw new Error('Failed to fetch departments');
+      }
+      const departmentsData = await departmentsResponse.json();
+      const departments = departmentsData.data || [];
+      const department = departments.find((dept: any) => dept.name === currentUser.department);
+      
+      if (!department) {
+        throw new Error('Department not found');
+      }
+
+      const futureDates = getCurrentAndFutureDates();
+      setProgressText(`Processing ${futureDates.length} dates with ${requirements.length} requirements...`);
+
+      // Process dates in batches to avoid overwhelming the server
+      const batchSize = 5;
+      const totalBatches = Math.ceil(futureDates.length / batchSize);
+      
+      for (let i = 0; i < futureDates.length; i += batchSize) {
+        const batch = futureDates.slice(i, i + batchSize);
+        const currentBatch = Math.floor(i / batchSize) + 1;
+        
+        setProgressText(`Processing batch ${currentBatch}/${totalBatches}...`);
+        setProgressValue((currentBatch - 1) / totalBatches * 90); // Reserve 10% for final steps
+        
+        const batchPromises = batch.map(async (dateString: string) => {
+          const availabilities = requirements.map(req => ({
+            requirementId: req._id,
+            requirementText: req.text,
+            isAvailable: true,
+            quantity: req.totalQuantity || 1,
+            maxCapacity: req.totalQuantity || 1
+          }));
+
+          const response = await fetch('http://localhost:5000/api/resource-availability/availability/bulk', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              departmentId: department._id,
+              departmentName: department.name,
+              date: dateString,
+              requirements: availabilities
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed to set availability for ${dateString}`);
+          }
+          return response.json();
+        });
+
+        await Promise.all(batchPromises);
+        console.log(`✅ Processed batch ${currentBatch}/${totalBatches}`);
+      }
+
+      // Refresh availability data
+      setProgressText('Refreshing data...');
+      setProgressValue(95);
+      await fetchAvailabilityData(department._id);
+      
+      setProgressText('Complete!');
+      setProgressValue(100);
+      
+      // Close progress modal after a short delay
+      setTimeout(() => {
+        setShowProgressModal(false);
+        setProgressOperation('');
+        setProgressValue(0);
+        setProgressText('');
+      }, 1500);
+      
+      toast.success(`Successfully set all ${requirements.length} requirements as AVAILABLE for ${futureDates.length} current/future days in ${format(calendarCurrentMonth, 'MMMM yyyy')}!`);
+      
+    } catch (error) {
+      console.error('Error setting bulk availability:', error);
+      toast.error(`Error setting bulk availability: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      // Close progress modal on error
+      setShowProgressModal(false);
+      setProgressOperation('');
+      setProgressValue(0);
+      setProgressText('');
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  // Bulk set all requirements unavailable for current and future dates
+  const handleBulkSetUnavailable = async () => {
+    if (!currentUser?.department || requirements.length === 0) {
+      toast.error('No requirements found for your department.');
+      return;
+    }
+
+    setShowUnavailableDialog(false);
+    setBulkLoading(true);
+    
+    // Show progress modal
+    setProgressOperation('unavailable');
+    setProgressValue(0);
+    setProgressText('Initializing...');
+    setShowProgressModal(true);
+    
+    try {
+      // Get department info
+      const departmentsResponse = await fetch('http://localhost:5000/api/departments/visible');
+      if (!departmentsResponse.ok) {
+        throw new Error('Failed to fetch departments');
+      }
+      const departmentsData = await departmentsResponse.json();
+      const departments = departmentsData.data || [];
+      const department = departments.find((dept: any) => dept.name === currentUser.department);
+      
+      if (!department) {
+        throw new Error('Department not found');
+      }
+
+      const futureDates = getCurrentAndFutureDates();
+      setProgressText(`Processing ${futureDates.length} dates with ${requirements.length} requirements...`);
+
+      // Process dates in batches
+      const batchSize = 5;
+      const totalBatches = Math.ceil(futureDates.length / batchSize);
+      
+      for (let i = 0; i < futureDates.length; i += batchSize) {
+        const batch = futureDates.slice(i, i + batchSize);
+        const currentBatch = Math.floor(i / batchSize) + 1;
+        
+        setProgressText(`Processing batch ${currentBatch}/${totalBatches}...`);
+        setProgressValue((currentBatch - 1) / totalBatches * 90); // Reserve 10% for final steps
+        
+        const batchPromises = batch.map(async (dateString: string) => {
+          const availabilities = requirements.map(req => ({
+            requirementId: req._id,
+            requirementText: req.text,
+            isAvailable: false,
+            quantity: 0,
+            maxCapacity: req.totalQuantity || 1
+          }));
+
+          const response = await fetch('http://localhost:5000/api/resource-availability/availability/bulk', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              departmentId: department._id,
+              departmentName: department.name,
+              date: dateString,
+              requirements: availabilities
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed to set availability for ${dateString}`);
+          }
+          return response.json();
+        });
+
+        await Promise.all(batchPromises);
+        console.log(`✅ Processed batch ${currentBatch}/${totalBatches}`);
+      }
+
+      // Refresh availability data
+      setProgressText('Refreshing data...');
+      setProgressValue(95);
+      await fetchAvailabilityData(department._id);
+      
+      setProgressText('Complete!');
+      setProgressValue(100);
+      
+      // Close progress modal after a short delay
+      setTimeout(() => {
+        setShowProgressModal(false);
+        setProgressOperation('');
+        setProgressValue(0);
+        setProgressText('');
+      }, 1500);
+      
+      toast.success(`Successfully set all ${requirements.length} requirements as UNAVAILABLE for ${futureDates.length} current/future days in ${format(calendarCurrentMonth, 'MMMM yyyy')}!`);
+      
+    } catch (error) {
+      console.error('Error setting bulk unavailability:', error);
+      toast.error(`Error setting bulk unavailability: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      // Close progress modal on error
+      setShowProgressModal(false);
+      setProgressOperation('');
+      setProgressValue(0);
+      setProgressText('');
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  // Delete all availability data for the current month
+  const handleDeleteAllAvailability = async () => {
+    if (!currentUser?.department || requirements.length === 0) {
+      toast.error('No requirements found for your department.');
+      return;
+    }
+
+    setShowDeleteDialog(false);
+    setBulkLoading(true);
+    
+    // Show progress modal
+    setProgressOperation('delete');
+    setProgressValue(0);
+    setProgressText('Initializing deletion...');
+    setShowProgressModal(true);
+    
+    try {
+      // Get department info
+      const departmentsResponse = await fetch('http://localhost:5000/api/departments/visible');
+      if (!departmentsResponse.ok) {
+        throw new Error('Failed to fetch departments');
+      }
+      const departmentsData = await departmentsResponse.json();
+      const departments = departmentsData.data || [];
+      const department = departments.find((dept: any) => dept.name === currentUser.department);
+      
+      if (!department) {
+        throw new Error('Department not found');
+      }
+
+      // Get all dates in the calendar month being viewed (including past dates for deletion)
+      const viewedYear = calendarCurrentMonth.getFullYear();
+      const viewedMonth = calendarCurrentMonth.getMonth();
+      const daysInMonth = new Date(viewedYear, viewedMonth + 1, 0).getDate();
+      
+      const allDates: string[] = [];
+      for (let day = 1; day <= daysInMonth; day++) {
+        const date = new Date(viewedYear, viewedMonth, day);
+        allDates.push(format(date, 'yyyy-MM-dd'));
+      }
+
+      setProgressText(`Deleting availability data for ${allDates.length} dates...`);
+      setProgressValue(25);
+
+      // Use bulk delete endpoint for better performance
+      const response = await fetch(`http://localhost:5000/api/resource-availability/department/${department._id}/bulk-dates`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          dates: allDates
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete availability data: ${response.statusText}`);
+      }
+
+      setProgressText('Processing deletion results...');
+      setProgressValue(70);
+
+      const result = await response.json();
+      console.log(`✅ Bulk delete completed: ${result.totalDeleted} records deleted, ${result.protectedDates} dates protected`);
+
+      // Refresh availability data
+      setProgressText('Refreshing data...');
+      setProgressValue(90);
+      await fetchAvailabilityData(department._id);
+      
+      // Show appropriate success message based on results
+      if (result.protectedDates > 0) {
+        toast.success(
+          `Cleared ${result.totalDeleted} availability records! ${result.protectedDates} dates were protected due to active bookings.`,
+          { duration: 6000 }
+        );
+        
+        // Show additional info about protected dates
+        if (result.protectedDatesList && result.protectedDatesList.length > 0) {
+          setTimeout(() => {
+            toast.info(
+              `Protected dates: ${result.protectedDatesList.slice(0, 5).join(', ')}${result.protectedDatesList.length > 5 ? '...' : ''}`,
+              { duration: 5000 }
+            );
+          }, 1000);
+        }
+      } else {
+        toast.success(`Successfully deleted all availability data for ${format(calendarCurrentMonth, 'MMMM yyyy')}! Calendar has been cleared.`);
+      }
+      
+      setProgressText('Complete!');
+      setProgressValue(100);
+      
+      // Close progress modal after a short delay
+      setTimeout(() => {
+        setShowProgressModal(false);
+        setProgressOperation('');
+        setProgressValue(0);
+        setProgressText('');
+      }, 1500);
+      
+    } catch (error) {
+      console.error('Error deleting availability data:', error);
+      toast.error(`Error deleting availability data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      // Close progress modal on error
+      setShowProgressModal(false);
+      setProgressOperation('');
+      setProgressValue(0);
+      setProgressText('');
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  // Toggle date selection mode
+  const toggleDateSelectionMode = () => {
+    setIsSelectingDatesMode(!isSelectingDatesMode);
+    if (!isSelectingDatesMode) {
+      setSelectedDatesForDeletion([]);
+      toast.info('Click on calendar dates to select them for deletion. Click "Select Dates" again to exit selection mode.');
+    } else {
+      setSelectedDatesForDeletion([]);
+      toast.info('Selection mode cancelled.');
+    }
+  };
+
+  // Handle date click for selection
+  const handleDateClickForSelection = (date: Date) => {
+    if (!isSelectingDatesMode) {
+      // Normal date click - open modal
+      handleDateClick(date);
+      return;
+    }
+
+    // Date selection mode - toggle date selection
+    const dateStr = format(date, 'yyyy-MM-dd');
+    
+    // Check if this date has availability data
+    const hasData = availabilityData.some(item => item.date === dateStr);
+    if (!hasData) {
+      toast.error('No availability data found for this date.');
+      return;
+    }
+
+    setSelectedDatesForDeletion(prev => {
+      if (prev.includes(dateStr)) {
+        return prev.filter(d => d !== dateStr);
+      } else {
+        return [...prev, dateStr];
+      }
+    });
+  };
+
+
+  // Handle selective date deletion
+  const handleSelectiveDateDeletion = async () => {
+    if (selectedDatesForDeletion.length === 0) {
+      toast.error('Please select at least one date to delete.');
+      return;
+    }
+
+    if (!currentUser?.department || requirements.length === 0) {
+      toast.error('No requirements found for your department.');
+      return;
+    }
+
+    setShowSelectiveDateDeleteDialog(false);
+    setBulkLoading(true);
+    
+    // Show progress modal
+    setProgressOperation('delete');
+    setProgressValue(0);
+    setProgressText('Initializing selective deletion...');
+    setShowProgressModal(true);
+    
+    try {
+      // Get department info
+      const departmentsResponse = await fetch('http://localhost:5000/api/departments/visible');
+      if (!departmentsResponse.ok) {
+        throw new Error('Failed to fetch departments');
+      }
+      const departmentsData = await departmentsResponse.json();
+      const departments = departmentsData.data || [];
+      const department = departments.find((dept: any) => dept.name === currentUser.department);
+      
+      if (!department) {
+        throw new Error('Department not found');
+      }
+
+      setProgressText(`Deleting availability data for ${selectedDatesForDeletion.length} selected dates...`);
+      setProgressValue(25);
+
+      // Use bulk delete endpoint for selected dates
+      const response = await fetch(`http://localhost:5000/api/resource-availability/department/${department._id}/bulk-dates`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          dates: selectedDatesForDeletion
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete availability data: ${response.statusText}`);
+      }
+
+      setProgressText('Processing deletion results...');
+      setProgressValue(70);
+
+      const result = await response.json();
+      console.log(`✅ Selective delete completed: ${result.totalDeleted} records deleted, ${result.protectedDates} dates protected`);
+
+      // Refresh availability data
+      setProgressText('Refreshing data...');
+      setProgressValue(90);
+      await fetchAvailabilityData(department._id);
+      
+      setProgressText('Complete!');
+      setProgressValue(100);
+      
+      // Close progress modal after a short delay
+      setTimeout(() => {
+        setShowProgressModal(false);
+        setProgressOperation('');
+        setProgressValue(0);
+        setProgressText('');
+      }, 1500);
+      
+      // Clear selected dates and exit selection mode
+      setSelectedDatesForDeletion([]);
+      setIsSelectingDatesMode(false);
+      
+      // Show appropriate success message
+      if (result.protectedDates > 0) {
+        toast.success(
+          `Cleared ${result.totalDeleted} availability records from ${selectedDatesForDeletion.length} selected dates! ${result.protectedDates} dates were protected due to active bookings.`,
+          { duration: 6000 }
+        );
+        
+        // Show additional info about protected dates
+        if (result.protectedDatesList && result.protectedDatesList.length > 0) {
+          setTimeout(() => {
+            toast.info(
+              `Protected dates: ${result.protectedDatesList.slice(0, 5).join(', ')}${result.protectedDatesList.length > 5 ? '...' : ''}`,
+              { duration: 5000 }
+            );
+          }, 1000);
+        }
+      } else {
+        toast.success(`Successfully deleted availability data for ${selectedDatesForDeletion.length} selected dates!`);
+      }
+      
+    } catch (error) {
+      console.error('Error deleting selected dates:', error);
+      toast.error(`Error deleting selected dates: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      // Close progress modal on error
+      setShowProgressModal(false);
+      setProgressOperation('');
+      setProgressValue(0);
+      setProgressText('');
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+
+  // Calculate summary stats for the viewed month
   const totalRequirements = requirements.length;
-  const availableToday = availabilityData.filter(item => 
-    item.date === format(new Date(), 'yyyy-MM-dd') && item.isAvailable
-  ).length;
-  const unavailableToday = availabilityData.filter(item => 
-    item.date === format(new Date(), 'yyyy-MM-dd') && !item.isAvailable
-  ).length;
+  const viewedMonthData = availabilityData.filter(item => {
+    const itemDate = new Date(item.date + 'T00:00:00');
+    return itemDate.getFullYear() === calendarCurrentMonth.getFullYear() && 
+           itemDate.getMonth() === calendarCurrentMonth.getMonth();
+  });
+  const availableInMonth = viewedMonthData.filter(item => item.isAvailable).length;
+  const unavailableInMonth = viewedMonthData.filter(item => !item.isAvailable).length;
 
   return (
     <div className="p-2 max-w-[98%] mx-auto">
@@ -439,16 +983,239 @@ const MyCalendarPage: React.FC = () => {
               </Badge>
               <Badge variant="outline" className="gap-1">
                 <CheckCircle className="w-3 h-3 text-green-600" />
-                Available Today: {availableToday}
+                Available: {availableInMonth}
               </Badge>
               <Badge variant="outline" className="gap-1">
                 <XCircle className="w-3 h-3 text-red-600" />
-                Unavailable Today: {unavailableToday}
+                Unavailable: {unavailableInMonth}
               </Badge>
             </div>
           </motion.div>
 
+          {/* Bulk Availability Management - Minimalist ShadCN Design */}
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="border rounded-lg p-6 bg-card"
+          >
+            <div className="space-y-4">
+              {/* Header */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-muted-foreground" />
+                  <h3 className="text-sm font-medium">Bulk Management</h3>
+                  <Badge variant="secondary" className="text-xs">
+                    {format(calendarCurrentMonth, 'MMM yyyy')}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Manage all {totalRequirements} requirements for current and future dates
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap gap-2">
+                {/* Clear All */}
+                <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={bulkLoading || totalRequirements === 0}
+                      className="h-8 text-xs"
+                    >
+                      {bulkLoading ? (
+                        <div className="animate-spin rounded-full h-3 w-3 border-b border-current mr-2"></div>
+                      ) : (
+                        <Trash2 className="w-3 h-3 mr-2" />
+                      )}
+                      Clear All
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Clear All Data</AlertDialogTitle>
+                      <AlertDialogDescription className="space-y-2 text-sm">
+                        <p>This will permanently delete all availability data for {format(calendarCurrentMonth, 'MMMM yyyy')}.</p>
+                        <div className="p-3 bg-green-50 border border-green-200 rounded-md">
+                          <p className="text-green-800 text-xs">
+                            <Shield className="w-3 h-3 inline mr-1" /> <strong>Smart Protection:</strong> Dates with active bookings will be automatically protected.
+                          </p>
+                        </div>
+                        <p className="text-xs text-muted-foreground">This action cannot be undone.</p>
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleDeleteAllAvailability}>
+                        Clear All Data
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+
+                {/* Select Dates for Deletion */}
+                <Button
+                  variant={isSelectingDatesMode ? "default" : "outline"}
+                  size="sm"
+                  disabled={availabilityData.length === 0}
+                  onClick={toggleDateSelectionMode}
+                  className={`h-8 text-xs ${isSelectingDatesMode ? 'bg-orange-600 hover:bg-orange-700' : 'bg-orange-50 hover:bg-orange-100 border-orange-200'}`}
+                >
+                  {isSelectingDatesMode ? (
+                    <>
+                      <X className="w-3 h-3 mr-2" />
+                      Exit Selection ({selectedDatesForDeletion.length})
+                    </>
+                  ) : (
+                    <>
+                      <CalendarIcon className="w-3 h-3 mr-2" />
+                      Select Dates
+                    </>
+                  )}
+                </Button>
+
+                {/* Delete Selected Dates */}
+                {selectedDatesForDeletion.length > 0 && (
+                  <AlertDialog open={showSelectiveDateDeleteDialog} onOpenChange={setShowSelectiveDateDeleteDialog}>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-8 text-xs"
+                      >
+                        <Trash2 className="w-3 h-3 mr-2" />
+                        Delete Selected ({selectedDatesForDeletion.length})
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Selected Dates</AlertDialogTitle>
+                        <AlertDialogDescription className="space-y-2 text-sm">
+                          <p>This will permanently delete all availability data for the {selectedDatesForDeletion.length} selected date{selectedDatesForDeletion.length !== 1 ? 's' : ''}:</p>
+                          <div className="p-3 bg-gray-50 border rounded-md max-h-32 overflow-y-auto">
+                            <div className="flex flex-wrap gap-1">
+                              {selectedDatesForDeletion.map(dateStr => (
+                                <Badge key={dateStr} variant="secondary" className="text-xs">
+                                  {format(new Date(dateStr + 'T00:00:00'), 'MMM dd')}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="p-3 bg-green-50 border border-green-200 rounded-md">
+                            <p className="text-green-800 text-xs">
+                              <Shield className="w-3 h-3 inline mr-1" /> <strong>Smart Protection:</strong> Dates with active bookings will be automatically protected.
+                            </p>
+                          </div>
+                          <p className="text-xs text-muted-foreground">This action cannot be undone.</p>
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleSelectiveDateDeletion}>
+                          Delete Selected
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
+
+
+                {/* Set Available */}
+                <AlertDialog open={showAvailableDialog} onOpenChange={setShowAvailableDialog}>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      size="sm"
+                      disabled={bulkLoading || totalRequirements === 0}
+                      className="h-8 text-xs bg-green-600 hover:bg-green-700"
+                    >
+                      {bulkLoading ? (
+                        <div className="animate-spin rounded-full h-3 w-3 border-b border-current mr-2"></div>
+                      ) : (
+                        <CheckCircle className="w-3 h-3 mr-2" />
+                      )}
+                      Set Available
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Set All Available</AlertDialogTitle>
+                      <AlertDialogDescription className="space-y-2 text-sm">
+                        <p>Set all {totalRequirements} requirements as available for current and future dates in {format(calendarCurrentMonth, 'MMMM yyyy')}.</p>
+                        <p className="text-xs text-muted-foreground">Past dates will not be affected.</p>
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction 
+                        onClick={handleBulkSetAvailable}
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        Set Available
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+
+                {/* Set Unavailable */}
+                <AlertDialog open={showUnavailableDialog} onOpenChange={setShowUnavailableDialog}>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={bulkLoading || totalRequirements === 0}
+                      className="h-8 text-xs"
+                    >
+                      {bulkLoading ? (
+                        <div className="animate-spin rounded-full h-3 w-3 border-b border-current mr-2"></div>
+                      ) : (
+                        <XCircle className="w-3 h-3 mr-2" />
+                      )}
+                      Set Unavailable
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Set All Unavailable</AlertDialogTitle>
+                      <AlertDialogDescription className="space-y-2 text-sm">
+                        <p>Set all {totalRequirements} requirements as unavailable for current and future dates in {format(calendarCurrentMonth, 'MMMM yyyy')}.</p>
+                        <p className="text-xs text-muted-foreground">Past dates will not be affected.</p>
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleBulkSetUnavailable}>
+                        Set Unavailable
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+
+              {/* Loading State */}
+              {bulkLoading && (
+                <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-md">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b border-current"></div>
+                  <span className="text-xs text-muted-foreground">
+                    Processing bulk update for {format(calendarCurrentMonth, 'MMMM yyyy')}...
+                  </span>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
           <Separator />
+
+          {/* Selection Mode Status */}
+          {isSelectingDatesMode && (
+            <div className="flex items-center gap-2 p-3 bg-orange-50 border border-orange-200 rounded-md">
+              <CalendarIcon className="w-4 h-4 text-orange-600" />
+              <span className="text-xs text-orange-800">
+                <strong>Date Selection Mode:</strong> Click calendar dates to select them for deletion. {selectedDatesForDeletion.length} date{selectedDatesForDeletion.length !== 1 ? 's' : ''} selected.
+              </span>
+            </div>
+          )}
 
           {/* Custom Calendar Component */}
           {loading ? (
@@ -459,12 +1226,15 @@ const MyCalendarPage: React.FC = () => {
           ) : (
             <CustomCalendar
               events={calendarEvents}
-              onDateClick={handleDateClick}
+              onDateClick={handleDateClickForSelection}
+              onMonthChange={setCalendarCurrentMonth}
               showNavigation={true}
               showLegend={true}
               cellHeight="min-h-[140px]"
               showEventCount={true}
               getEventCountForDate={getEventCountForDate}
+              selectedDates={isSelectingDatesMode ? selectedDatesForDeletion : []}
+              isSelectionMode={isSelectingDatesMode}
             />
           )}
         </CardContent>
@@ -481,6 +1251,31 @@ const MyCalendarPage: React.FC = () => {
         onSave={handleSaveAvailability}
         existingAvailabilities={selectedDate ? getExistingAvailabilities(selectedDate) : []}
       />
+
+      {/* Progress Modal */}
+      <Dialog open={showProgressModal} onOpenChange={setShowProgressModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {progressOperation === 'available' && 'Setting Requirements Available'}
+              {progressOperation === 'unavailable' && 'Setting Requirements Unavailable'}
+              {progressOperation === 'delete' && 'Clearing Availability Data'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span>Progress</span>
+                <span>{Math.round(progressValue)}%</span>
+              </div>
+              <Progress value={progressValue} className="h-2" />
+            </div>
+            <p className="text-sm text-muted-foreground text-center">
+              {progressText}
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

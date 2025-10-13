@@ -35,6 +35,8 @@ interface CustomCalendarProps {
   renderEvent?: (event: CalendarEvent) => React.ReactNode;
   showEventCount?: boolean;
   getEventCountForDate?: (date: Date) => number;
+  selectedDates?: string[];
+  isSelectionMode?: boolean;
 }
 
 const CustomCalendar: React.FC<CustomCalendarProps> = ({
@@ -49,7 +51,9 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
   renderDateContent,
   renderEvent,
   showEventCount = false,
-  getEventCountForDate
+  getEventCountForDate,
+  selectedDates = [],
+  isSelectionMode = false
 }) => {
   const [currentDate, setCurrentDate] = useState(initialDate);
 
@@ -67,14 +71,23 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
     );
   };
 
+  // Check if a date is selected
+  const isDateSelected = (date: Date): boolean => {
+    const dateStr = date.toLocaleDateString('en-CA');
+    return selectedDates.includes(dateStr);
+  };
+
   // Handle date selection
   const handleDateClick = (date: Date) => {
-    // Don't allow clicking on past dates
-    const today = startOfDay(new Date());
-    const clickedDate = startOfDay(date);
-    
-    if (isBefore(clickedDate, today)) {
-      return; // Do nothing for past dates
+    // In selection mode, allow clicking on past dates for deletion
+    if (!isSelectionMode) {
+      // Don't allow clicking on past dates in normal mode
+      const today = startOfDay(new Date());
+      const clickedDate = startOfDay(date);
+      
+      if (isBefore(clickedDate, today)) {
+        return; // Do nothing for past dates
+      }
     }
     
     onDateClick?.(date);
@@ -150,24 +163,32 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
     const isToday = isSameDay(date, new Date());
     const isCurrentMonth = isSameMonth(date, currentDate);
     const eventCount = showEventCount && getEventCountForDate ? getEventCountForDate(date) : 0;
+    const isSelected = isDateSelected(date);
 
     return (
       <>
         {/* Date Number */}
         <div className={`
           text-sm font-medium mb-2
-          ${isToday ? 'text-blue-600' : isCurrentMonth ? 'text-gray-900' : 'text-gray-400'}
+          ${isSelected ? 'text-orange-800 font-bold' : isToday ? 'text-blue-600' : isCurrentMonth ? 'text-gray-900' : 'text-gray-400'}
         `}>
           {format(date, 'd')}
         </div>
 
+        {/* Selection Indicator */}
+        {isSelected && (
+          <div className="absolute top-2 right-2 w-4 h-4 bg-orange-600 rounded-full flex items-center justify-center">
+            <CheckCircle className="w-2.5 h-2.5 text-white" />
+          </div>
+        )}
+
         {/* Today Indicator */}
-        {isToday && !showEventCount && (
+        {isToday && !showEventCount && !isSelected && (
           <div className="absolute top-2 right-2 w-2 h-2 bg-blue-600 rounded-full"></div>
         )}
 
         {/* Event Count Badge */}
-        {showEventCount && eventCount > 0 && (
+        {showEventCount && eventCount > 0 && !isSelected && (
           <EventCountBadge 
             count={eventCount}
             variant="destructive"
@@ -247,6 +268,7 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
             const isToday = isSameDay(date, new Date());
             const isCurrentMonth = isSameMonth(date, currentDate);
             const isPastDate = isBefore(startOfDay(date), startOfDay(new Date()));
+            const isSelected = isDateSelected(date);
 
             return (
               <motion.div
@@ -258,10 +280,13 @@ const CustomCalendar: React.FC<CustomCalendarProps> = ({
                   relative p-4 ${cellHeight} border-r border-b border-gray-100 group
                   transition-all duration-200
                   ${!isCurrentMonth ? 'text-gray-400 bg-gray-25' : ''}
-                  ${isToday ? 'bg-blue-50 border-blue-200' : ''}
-                  ${isPastDate 
-                    ? 'cursor-not-allowed opacity-50 bg-gray-100 text-gray-400' 
-                    : 'cursor-pointer hover:bg-gray-50'
+                  ${isToday && !isSelected ? 'bg-blue-50 border-blue-200' : ''}
+                  ${isSelected ? 'bg-orange-100 border-orange-300 ring-2 ring-orange-200' : ''}
+                  ${isSelectionMode 
+                    ? 'cursor-pointer hover:bg-orange-50' 
+                    : isPastDate 
+                      ? 'cursor-not-allowed opacity-50 bg-gray-100 text-gray-400' 
+                      : 'cursor-pointer hover:bg-gray-50'
                   }
                 `}
                 onClick={() => handleDateClick(date)}

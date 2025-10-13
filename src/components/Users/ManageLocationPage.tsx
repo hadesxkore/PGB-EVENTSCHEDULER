@@ -4,11 +4,23 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Progress } from '@/components/ui/progress';
 import CustomCalendar, { type CalendarEvent } from '@/components/ui/custom-calendar';
 import { Calendar } from '@/components/ui/calendar';
 import { format } from 'date-fns';
@@ -28,13 +40,12 @@ import {
   Clock,
   Users,
   Eye,
-  FileText,
-  CheckCircle,
-  XCircle,
-  AlertCircle,
   FileDown,
   Printer,
-  RefreshCw
+  RefreshCw,
+  Settings,
+  Shield,
+  MapPinIcon
 } from 'lucide-react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Autoplay, Pagination } from 'swiper/modules';
@@ -106,7 +117,22 @@ const ManageLocationPage: React.FC = () => {
   const [loadingEventDetails, setLoadingEventDetails] = useState(false);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string>('');
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
+  const [showBulkAvailableDialog, setShowBulkAvailableDialog] = useState(false);
+  const [showSelectiveDateDeleteDialog, setShowSelectiveDateDeleteDialog] = useState(false);
+  const [selectedDatesForDeletion, setSelectedDatesForDeletion] = useState<string[]>([]);
+  const [isSelectingDatesMode, setIsSelectingDatesMode] = useState(false);
 
+  // Progress Modal States
+  const [showProgressModal, setShowProgressModal] = useState(false);
+  const [progressValue, setProgressValue] = useState(0);
+  const [progressText, setProgressText] = useState('');
+  const [progressOperation, setProgressOperation] = useState<'add' | 'delete' | ''>('');
+
+  // Calendar Month State - tracks which month user is currently viewing
+  const [calendarCurrentMonth, setCalendarCurrentMonth] = useState(new Date());
+  
   // Default location names
   const defaultLocationNames = [
     'Atrium',
@@ -1314,6 +1340,639 @@ const ManageLocationPage: React.FC = () => {
     }
   };
 
+  // Get current and future dates in currently viewed month (no past dates)
+  const getCurrentAndFutureDates = (): string[] => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Reset time to start of day
+    
+    // Use the calendar's currently viewed month instead of system month
+    const viewedYear = calendarCurrentMonth.getFullYear();
+    const viewedMonth = calendarCurrentMonth.getMonth();
+    
+    const dates: string[] = [];
+    const daysInMonth = new Date(viewedYear, viewedMonth + 1, 0).getDate();
+    
+    // Only get dates for the currently viewed month in calendar
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(viewedYear, viewedMonth, day);
+      // Only include current and future dates (no past dates)
+      if (date >= today) {
+        dates.push(format(date, 'yyyy-MM-dd'));
+      }
+    }
+    
+    return dates;
+  };
+
+  // Progress Modal Helper Functions
+  const startProgressModal = (operation: 'add' | 'delete', initialText: string) => {
+    setProgressOperation(operation);
+    setProgressValue(0);
+    setProgressText(initialText);
+    setShowProgressModal(true);
+  };
+
+  const updateProgress = (value: number, text: string) => {
+    setProgressValue(value);
+    setProgressText(text);
+  };
+
+  const closeProgressModal = () => {
+    setShowProgressModal(false);
+    setProgressValue(0);
+    setProgressText('');
+    setProgressOperation('');
+  };
+
+  // Bulk add all locations as available for current and future dates (OPTIMIZED)
+  const handleBulkAddAllLocations = async () => {
+    setShowBulkAvailableDialog(false);
+    
+    try {
+      const futureDates = getCurrentAndFutureDates();
+      console.log(`🚀 OPTIMIZED: Bulk adding all ${defaultLocationNames.length} locations for ${futureDates.length} current/future days`);
+
+      // Start progress modal
+      startProgressModal('add', 'Preparing location data...');
+
+      // Pre-filter existing locations to avoid duplicates
+      const existingLocationKeys = new Set(
+        locationAvailabilities.map(loc => `${loc.date}-${loc.locationName.toLowerCase()}`)
+      );
+
+      updateProgress(10, 'Building location data...');
+
+      // Pre-build location data lookup for auto-population
+      const locationDataLookup = new Map();
+      defaultLocationNames.forEach(locationName => {
+        const existingLocationData = locationAvailabilities
+          .filter(loc => loc.locationName === locationName)
+          .sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime())
+          .find(loc => loc.capacity && loc.description);
+        
+        locationDataLookup.set(locationName, existingLocationData);
+      });
+
+      // Build all location entries to create
+      const locationsToCreate: any[] = [];
+      
+      for (const dateString of futureDates) {
+        for (const locationName of defaultLocationNames) {
+          const locationKey = `${dateString}-${locationName.toLowerCase()}`;
+          
+          // Skip if already exists
+          if (existingLocationKeys.has(locationKey)) {
+            console.log(`⏭️ Skipping ${locationName} on ${dateString} - already exists`);
+            continue;
+          }
+
+          // Get auto-populated data
+          const existingLocationData = locationDataLookup.get(locationName);
+
+          // Prepare location data
+          const locationData = {
+            date: dateString,
+            locationName: locationName,
+            capacity: existingLocationData?.capacity || 50, // Default capacity
+            description: existingLocationData?.description || `${locationName} - Available for events`,
+            status: 'available' as 'available' | 'unavailable',
+            departmentName: currentUser?.department || 'PMO'
+          };
+
+          locationsToCreate.push(locationData);
+        }
+      }
+
+      if (locationsToCreate.length === 0) {
+        closeProgressModal();
+        toast.info('All locations are already added for current and future dates!');
+        return;
+      }
+
+      updateProgress(20, `Prepared ${locationsToCreate.length} location entries...`);
+      console.log(`📦 Prepared ${locationsToCreate.length} location entries for batch creation`);
+
+      // BATCH PROCESSING: Process in chunks of 20 for optimal performance
+      const BATCH_SIZE = 20;
+      const batches = [];
+      for (let i = 0; i < locationsToCreate.length; i += BATCH_SIZE) {
+        batches.push(locationsToCreate.slice(i, i + BATCH_SIZE));
+      }
+
+      console.log(`⚡ Processing ${batches.length} batches of ${BATCH_SIZE} locations each`);
+
+      let totalAdded = 0;
+      let totalFailed = 0;
+
+      // Process batches sequentially for progress tracking
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        const progressPercent = 20 + ((batchIndex / batches.length) * 70);
+        
+        updateProgress(progressPercent, `Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} locations)...`);
+        console.log(`🔄 Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} locations)`);
+        
+        // Process all locations in this batch concurrently
+        const batchPromises = batch.map(async (locationData) => {
+          try {
+            const response = await fetch(`${API_BASE_URL}/location-availability`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(locationData)
+            });
+
+            if (response.ok) {
+              return { success: true, location: locationData.locationName, date: locationData.date };
+            } else {
+              console.error(`Failed to add ${locationData.locationName} on ${locationData.date}`);
+              return { success: false, location: locationData.locationName, date: locationData.date };
+            }
+          } catch (error) {
+            console.error(`Error adding ${locationData.locationName} on ${locationData.date}:`, error);
+            return { success: false, location: locationData.locationName, date: locationData.date, error };
+          }
+        });
+
+        // Wait for all locations in this batch to complete
+        const batchResults = await Promise.all(batchPromises);
+        
+        // Count results
+        const batchSuccessCount = batchResults.filter(r => r.success).length;
+        const batchFailCount = batchResults.filter(r => !r.success).length;
+        
+        totalAdded += batchSuccessCount;
+        totalFailed += batchFailCount;
+        
+        console.log(`✅ Batch ${batchIndex + 1} completed: ${batchSuccessCount} success, ${batchFailCount} failed`);
+      }
+
+      updateProgress(90, 'Refreshing location data...');
+      console.log(`🎯 BULK OPERATION COMPLETED: ${totalAdded} added, ${totalFailed} failed`);
+
+      // Refresh data
+      await loadLocationData();
+      
+      updateProgress(100, 'Operation completed!');
+      
+      // Show results
+      if (totalFailed > 0) {
+        toast.success(`Added ${totalAdded} locations! ${totalFailed} failed to add.`, { duration: 6000 });
+      } else {
+        toast.success(`Successfully added all ${totalAdded} location entries for ${futureDates.length} current/future days in ${format(new Date(), 'MMMM yyyy')}!`);
+      }
+
+      // Close progress modal after a brief delay
+      setTimeout(closeProgressModal, 1500);
+      
+    } catch (error) {
+      console.error('Error in bulk add operation:', error);
+      toast.error(`Error adding locations: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  // Bulk delete all location data for current month (with booking protection) - OPTIMIZED
+  const handleBulkDeleteAllLocations = async () => {
+    setShowBulkDeleteDialog(false);
+    
+    try {
+      console.log(`🚀 OPTIMIZED: Bulk deleting location data for ${format(calendarCurrentMonth, 'MMMM yyyy')}`);
+
+      // Start progress modal
+      startProgressModal('delete', 'Analyzing location data...');
+
+      // Filter locations to only include the currently viewed month
+      const viewedYear = calendarCurrentMonth.getFullYear();
+      const viewedMonth = calendarCurrentMonth.getMonth();
+      
+      const locationsInViewedMonth = locationAvailabilities.filter(location => {
+        const locationDate = new Date(location.date + 'T00:00:00');
+        return locationDate.getFullYear() === viewedYear && 
+               locationDate.getMonth() === viewedMonth;
+      });
+
+      if (locationsInViewedMonth.length === 0) {
+        closeProgressModal();
+        toast.info(`No location data to delete for ${format(calendarCurrentMonth, 'MMMM yyyy')}!`);
+        return;
+      }
+
+      updateProgress(10, 'Checking for active bookings...');
+
+      // Pre-build active events lookup for faster checking
+      const activeEventsLookup = new Map();
+      allEvents
+        .filter(event => event.status === 'submitted' || event.status === 'approved')
+        .forEach(event => {
+          const eventLocation = (event.location || '').toLowerCase().trim();
+          const eventStartDate = new Date(event.startDate);
+          const eventEndDate = new Date(event.endDate);
+          const eventStartLocalDate = eventStartDate.toLocaleDateString('en-CA');
+          const eventEndLocalDate = eventEndDate.toLocaleDateString('en-CA');
+
+          if (!activeEventsLookup.has(eventLocation)) {
+            activeEventsLookup.set(eventLocation, []);
+          }
+          activeEventsLookup.get(eventLocation).push({
+            startDate: eventStartLocalDate,
+            endDate: eventEndLocalDate,
+            title: event.eventTitle
+          });
+        });
+
+      updateProgress(20, 'Separating protected locations...');
+
+      // Separate locations into protected and deletable (only for viewed month)
+      const locationsToDelete: any[] = [];
+      const protectedLocations: any[] = [];
+
+      for (const location of locationsInViewedMonth) {
+        const searchLocation = location.locationName.toLowerCase().trim();
+        let hasActiveEvents = false;
+
+        // Check against all possible event location matches
+        for (const [eventLocation, events] of activeEventsLookup.entries()) {
+          const locationMatch = eventLocation.includes(searchLocation) ||
+                                 searchLocation.includes(eventLocation) ||
+                                 eventLocation === searchLocation;
+
+          if (locationMatch) {
+            // Check if any event overlaps with this location's date
+            const hasOverlap = events.some((event: any) => 
+              location.date >= event.startDate && location.date <= event.endDate
+            );
+
+            if (hasOverlap) {
+              hasActiveEvents = true;
+              break;
+            }
+          }
+        }
+
+        if (hasActiveEvents) {
+          protectedLocations.push(location);
+          console.log(`🛡️ Protected ${location.locationName} on ${location.date} - has active bookings`);
+        } else {
+          locationsToDelete.push(location);
+        }
+      }
+
+      console.log(`📊 Analysis: ${locationsToDelete.length} to delete, ${protectedLocations.length} protected`);
+
+      if (locationsToDelete.length === 0) {
+        closeProgressModal();
+        toast.info(`All ${protectedLocations.length} location entries are protected due to active bookings!`);
+        return;
+      }
+
+      updateProgress(30, `Found ${locationsToDelete.length} locations to delete...`);
+
+      // BATCH PROCESSING: Delete in chunks for optimal performance
+      const BATCH_SIZE = 15;
+      const batches = [];
+      for (let i = 0; i < locationsToDelete.length; i += BATCH_SIZE) {
+        batches.push(locationsToDelete.slice(i, i + BATCH_SIZE));
+      }
+
+      console.log(`⚡ Processing ${batches.length} deletion batches of ${BATCH_SIZE} locations each`);
+
+      let totalDeleted = 0;
+      let totalFailed = 0;
+
+      // Process batches sequentially for progress tracking
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        const progressPercent = 30 + ((batchIndex / batches.length) * 60);
+        
+        updateProgress(progressPercent, `Deleting batch ${batchIndex + 1}/${batches.length} (${batch.length} locations)...`);
+        console.log(`🗑️ Processing deletion batch ${batchIndex + 1}/${batches.length} (${batch.length} locations)`);
+        
+        // Process all deletions in this batch concurrently
+        const deletionPromises = batch.map(async (location) => {
+          try {
+            const response = await fetch(`${API_BASE_URL}/location-availability/${location._id}`, {
+              method: 'DELETE',
+              headers: {
+                'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+                'Content-Type': 'application/json'
+              }
+            });
+
+            if (response.ok) {
+              return { success: true, location: location.locationName, date: location.date };
+            } else {
+              console.error(`Failed to delete ${location.locationName} on ${location.date}`);
+              return { success: false, location: location.locationName, date: location.date };
+            }
+          } catch (error) {
+            console.error(`Error deleting ${location.locationName} on ${location.date}:`, error);
+            return { success: false, location: location.locationName, date: location.date, error };
+          }
+        });
+
+        // Wait for all deletions in this batch to complete
+        const batchResults = await Promise.all(deletionPromises);
+        
+        // Count results
+        const batchSuccessCount = batchResults.filter(r => r.success).length;
+        const batchFailCount = batchResults.filter(r => !r.success).length;
+        
+        totalDeleted += batchSuccessCount;
+        totalFailed += batchFailCount;
+        
+        console.log(`✅ Deletion batch ${batchIndex + 1} completed: ${batchSuccessCount} deleted, ${batchFailCount} failed`);
+      }
+
+      updateProgress(90, 'Refreshing location data...');
+      console.log(`🎯 BULK DELETE COMPLETED: ${totalDeleted} deleted, ${totalFailed} failed, ${protectedLocations.length} protected`);
+
+      // Refresh data
+      await loadLocationData();
+      
+      updateProgress(100, 'Operation completed!');
+      
+      // Show results
+      if (protectedLocations.length > 0) {
+        if (totalFailed > 0) {
+          toast.success(
+            `Deleted ${totalDeleted} entries! ${protectedLocations.length} protected due to bookings. ${totalFailed} failed.`,
+            { duration: 8000 }
+          );
+        } else {
+          toast.success(
+            `Deleted ${totalDeleted} location entries! ${protectedLocations.length} entries were protected due to active bookings.`,
+            { duration: 6000 }
+          );
+        }
+      } else {
+        if (totalFailed > 0) {
+          toast.success(`Deleted ${totalDeleted} entries! ${totalFailed} failed to delete.`, { duration: 6000 });
+        } else {
+          toast.success(`Successfully deleted all ${totalDeleted} location entries for ${format(calendarCurrentMonth, 'MMMM yyyy')}!`);
+        }
+      }
+
+      // Close progress modal after a brief delay
+      setTimeout(closeProgressModal, 1500);
+      
+    } catch (error) {
+      console.error('Error in bulk delete operation:', error);
+      closeProgressModal();
+      toast.error(`Error deleting locations: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  // Handle selective date deletion
+  const handleSelectiveDateDelete = async () => {
+    setShowSelectiveDateDeleteDialog(false);
+    
+    try {
+      if (selectedDatesForDeletion.length === 0) {
+        toast.error('No dates selected for deletion!');
+        return;
+      }
+
+      console.log(`🎯 SELECTIVE DELETE: Processing ${selectedDatesForDeletion.length} selected dates`);
+
+      // Start progress modal
+      startProgressModal('delete', 'Analyzing selected dates...');
+
+      // Get locations for selected dates
+      const locationsToProcess = locationAvailabilities.filter(location => 
+        selectedDatesForDeletion.includes(location.date)
+      );
+
+      if (locationsToProcess.length === 0) {
+        closeProgressModal();
+        toast.info('No location data found for selected dates!');
+        return;
+      }
+
+      updateProgress(15, 'Checking for active bookings...');
+
+      // Pre-build active events lookup for faster checking
+      const activeEventsLookup = new Map();
+      allEvents
+        .filter(event => event.status === 'submitted' || event.status === 'approved')
+        .forEach(event => {
+          const eventLocation = (event.location || '').toLowerCase().trim();
+          const eventStartDate = new Date(event.startDate);
+          const eventEndDate = new Date(event.endDate);
+          const eventStartLocalDate = eventStartDate.toLocaleDateString('en-CA');
+          const eventEndLocalDate = eventEndDate.toLocaleDateString('en-CA');
+
+          if (!activeEventsLookup.has(eventLocation)) {
+            activeEventsLookup.set(eventLocation, []);
+          }
+          activeEventsLookup.get(eventLocation).push({
+            startDate: eventStartLocalDate,
+            endDate: eventEndLocalDate,
+            title: event.eventTitle
+          });
+        });
+
+      updateProgress(25, 'Separating protected locations...');
+
+      // Separate locations into protected and deletable
+      const locationsToDelete: any[] = [];
+      const protectedLocations: any[] = [];
+
+      for (const location of locationsToProcess) {
+        const searchLocation = location.locationName.toLowerCase().trim();
+        let hasActiveEvents = false;
+
+        // Check against all possible event location matches
+        for (const [eventLocation, events] of activeEventsLookup.entries()) {
+          const locationMatch = eventLocation.includes(searchLocation) ||
+                                 searchLocation.includes(eventLocation) ||
+                                 eventLocation === searchLocation;
+
+          if (locationMatch) {
+            // Check if any event overlaps with this location's date
+            const hasOverlap = events.some((event: any) => 
+              location.date >= event.startDate && location.date <= event.endDate
+            );
+
+            if (hasOverlap) {
+              hasActiveEvents = true;
+              break;
+            }
+          }
+        }
+
+        if (hasActiveEvents) {
+          protectedLocations.push(location);
+          console.log(`🛡️ Protected ${location.locationName} on ${location.date} - has active bookings`);
+        } else {
+          locationsToDelete.push(location);
+        }
+      }
+
+      console.log(`📊 Selective Analysis: ${locationsToDelete.length} to delete, ${protectedLocations.length} protected`);
+
+      if (locationsToDelete.length === 0) {
+        closeProgressModal();
+        toast.info(`All ${protectedLocations.length} location entries for selected dates are protected due to active bookings!`);
+        return;
+      }
+
+      updateProgress(35, `Found ${locationsToDelete.length} locations to delete...`);
+
+      // BATCH PROCESSING: Delete in chunks for optimal performance
+      const BATCH_SIZE = 15;
+      const batches = [];
+      for (let i = 0; i < locationsToDelete.length; i += BATCH_SIZE) {
+        batches.push(locationsToDelete.slice(i, i + BATCH_SIZE));
+      }
+
+      console.log(`⚡ Processing ${batches.length} selective deletion batches`);
+
+      let totalDeleted = 0;
+      let totalFailed = 0;
+
+      // Process batches sequentially for progress tracking
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        const progressPercent = 35 + ((batchIndex / batches.length) * 55);
+        
+        updateProgress(progressPercent, `Deleting batch ${batchIndex + 1}/${batches.length} (${batch.length} locations)...`);
+        console.log(`🗑️ Processing selective batch ${batchIndex + 1}/${batches.length} (${batch.length} locations)`);
+        
+        // Process all deletions in this batch concurrently
+        const deletionPromises = batch.map(async (location) => {
+          try {
+            const response = await fetch(`${API_BASE_URL}/location-availability/${location._id}`, {
+              method: 'DELETE',
+              headers: {
+                'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+                'Content-Type': 'application/json'
+              }
+            });
+
+            if (response.ok) {
+              return { success: true, location: location.locationName, date: location.date };
+            } else {
+              console.error(`Failed to delete ${location.locationName} on ${location.date}`);
+              return { success: false, location: location.locationName, date: location.date };
+            }
+          } catch (error) {
+            console.error(`Error deleting ${location.locationName} on ${location.date}:`, error);
+            return { success: false, location: location.locationName, date: location.date, error };
+          }
+        });
+
+        // Wait for all deletions in this batch to complete
+        const batchResults = await Promise.all(deletionPromises);
+        
+        // Count results
+        const batchSuccessCount = batchResults.filter(r => r.success).length;
+        const batchFailCount = batchResults.filter(r => !r.success).length;
+        
+        totalDeleted += batchSuccessCount;
+        totalFailed += batchFailCount;
+        
+        console.log(`✅ Selective batch ${batchIndex + 1} completed: ${batchSuccessCount} deleted, ${batchFailCount} failed`);
+      }
+
+      updateProgress(90, 'Refreshing location data...');
+      console.log(`🎯 SELECTIVE DELETE COMPLETED: ${totalDeleted} deleted, ${totalFailed} failed, ${protectedLocations.length} protected`);
+
+      // Clear selection and exit selection mode
+      setSelectedDatesForDeletion([]);
+      setIsSelectingDatesMode(false);
+
+      // Refresh data
+      await loadLocationData();
+      
+      updateProgress(100, 'Operation completed!');
+      
+      // Show results
+      const selectedDatesList = selectedDatesForDeletion.slice(0, 3).join(', ') + (selectedDatesForDeletion.length > 3 ? '...' : '');
+      
+      if (protectedLocations.length > 0) {
+        if (totalFailed > 0) {
+          toast.success(
+            `Deleted ${totalDeleted} entries from selected dates (${selectedDatesList})! ${protectedLocations.length} protected. ${totalFailed} failed.`,
+            { duration: 8000 }
+          );
+        } else {
+          toast.success(
+            `Deleted ${totalDeleted} entries from selected dates (${selectedDatesList})! ${protectedLocations.length} entries were protected due to active bookings.`,
+            { duration: 6000 }
+          );
+        }
+      } else {
+        if (totalFailed > 0) {
+          toast.success(`Deleted ${totalDeleted} entries from selected dates! ${totalFailed} failed to delete.`, { duration: 6000 });
+        } else {
+          toast.success(`Successfully deleted all ${totalDeleted} location entries from selected dates (${selectedDatesList})!`);
+        }
+      }
+
+      // Close progress modal after a brief delay
+      setTimeout(closeProgressModal, 1500);
+      
+    } catch (error) {
+      console.error('Error in selective date deletion:', error);
+      closeProgressModal();
+      toast.error(`Error deleting selected dates: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  // Toggle date selection mode
+  const toggleDateSelectionMode = () => {
+    setIsSelectingDatesMode(!isSelectingDatesMode);
+    if (!isSelectingDatesMode) {
+      setSelectedDatesForDeletion([]);
+      toast.info('Click on calendar dates to select them for deletion. Click "Select Dates" again to exit selection mode.');
+    } else {
+      setSelectedDatesForDeletion([]);
+      toast.info('Date selection mode disabled.');
+    }
+  };
+
+  // Handle date click for selection
+  const handleDateClickForSelection = (date: Date) => {
+    if (!isSelectingDatesMode) {
+      // Normal date click - open location modal
+      handleDateClick(date);
+      return;
+    }
+
+    // Selection mode - toggle date selection
+    const dateStr = format(date, 'yyyy-MM-dd');
+    
+    // Check if this date has any location data
+    const hasLocationData = locationAvailabilities.some(loc => loc.date === dateStr);
+    
+    if (!hasLocationData) {
+      toast.warning(`No location data found for ${format(date, 'MMM dd, yyyy')}`);
+      return;
+    }
+
+    setSelectedDatesForDeletion(prev => {
+      if (prev.includes(dateStr)) {
+        // Remove from selection
+        const newSelection = prev.filter(d => d !== dateStr);
+        toast.info(`Removed ${format(date, 'MMM dd')} from selection (${newSelection.length} dates selected)`);
+        return newSelection;
+      } else {
+        // Add to selection
+        const newSelection = [...prev, dateStr];
+        toast.info(`Added ${format(date, 'MMM dd')} to selection (${newSelection.length} dates selected)`);
+        return newSelection;
+      }
+    });
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -1514,11 +2173,190 @@ const ManageLocationPage: React.FC = () => {
         </Card>
       </motion.div>
 
+      {/* Bulk Location Management - Minimalist ShadCN Design */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+        className="border rounded-lg p-6 bg-card mb-6"
+      >
+        <div className="space-y-4">
+          {/* Header */}
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Settings className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-sm font-medium">Bulk Location Management</h3>
+              <Badge variant="secondary" className="text-xs">
+                {format(calendarCurrentMonth, 'MMM yyyy')}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Add all {defaultLocationNames.length} locations or clear all data for current and future dates
+            </p>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex flex-wrap gap-2">
+            {/* Clear All */}
+            <AlertDialog open={showBulkDeleteDialog} onOpenChange={setShowBulkDeleteDialog}>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={locationAvailabilities.length === 0 || bulkLoading}
+                  className="h-8 text-xs"
+                >
+                  {bulkLoading ? (
+                    <div className="animate-spin rounded-full h-3 w-3 border-b border-current mr-2"></div>
+                  ) : (
+                    <Trash2 className="w-3 h-3 mr-2" />
+                  )}
+                  Clear All Data
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Clear All Location Data</AlertDialogTitle>
+                  <AlertDialogDescription className="space-y-2 text-sm">
+                    <p>This will permanently delete all location availability data for {format(calendarCurrentMonth, 'MMMM yyyy')}.</p>
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-md">
+                      <p className="text-green-800 text-xs">
+                        <Shield className="w-3 h-3 inline mr-1" /> <strong>Smart Protection:</strong> Locations with active bookings will be automatically protected.
+                      </p>
+                    </div>
+                    <p className="text-xs text-muted-foreground">This action cannot be undone.</p>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleBulkDeleteAllLocations}>
+                    Clear All Data
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Add All Locations */}
+            <AlertDialog open={showBulkAvailableDialog} onOpenChange={setShowBulkAvailableDialog}>
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="sm"
+                  className="h-8 text-xs bg-blue-600 hover:bg-blue-700"
+                >
+                  <Plus className="w-3 h-3 mr-2" />
+                  Add All Locations
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Add All Locations</AlertDialogTitle>
+                  <AlertDialogDescription className="space-y-2 text-sm">
+                    <p>This will add all {defaultLocationNames.length} default locations as available for current and future dates in {format(calendarCurrentMonth, 'MMMM yyyy')}.</p>
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                      <p className="text-blue-800 text-xs">
+                        <MapPinIcon className="w-3 h-3 inline mr-1" /> <strong>Auto-Population:</strong> Existing location data (capacity, description) will be used when available.
+                      </p>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Past dates will not be affected. Existing entries will be skipped.</p>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction 
+                    onClick={handleBulkAddAllLocations}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    Add All Locations
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Select Dates for Deletion */}
+            <Button
+              variant={isSelectingDatesMode ? "default" : "outline"}
+              size="sm"
+              disabled={locationAvailabilities.length === 0}
+              onClick={toggleDateSelectionMode}
+              className={`h-8 text-xs ${isSelectingDatesMode ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
+            >
+              {isSelectingDatesMode ? (
+                <>
+                  <X className="w-3 h-3 mr-2" />
+                  Exit Selection ({selectedDatesForDeletion.length})
+                </>
+              ) : (
+                <>
+                  <CalendarIcon className="w-3 h-3 mr-2" />
+                  Select Dates
+                </>
+              )}
+            </Button>
+
+            {/* Delete Selected Dates */}
+            {selectedDatesForDeletion.length > 0 && (
+              <AlertDialog open={showSelectiveDateDeleteDialog} onOpenChange={setShowSelectiveDateDeleteDialog}>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-8 text-xs"
+                  >
+                    <Trash2 className="w-3 h-3 mr-2" />
+                    Delete Selected ({selectedDatesForDeletion.length})
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete Selected Dates</AlertDialogTitle>
+                    <AlertDialogDescription className="space-y-2 text-sm">
+                      <p>This will permanently delete all location availability data for the {selectedDatesForDeletion.length} selected date{selectedDatesForDeletion.length !== 1 ? 's' : ''}:</p>
+                      <div className="p-3 bg-gray-50 border rounded-md max-h-32 overflow-y-auto">
+                        <div className="flex flex-wrap gap-1">
+                          {selectedDatesForDeletion.map(dateStr => (
+                            <Badge key={dateStr} variant="secondary" className="text-xs">
+                              {format(new Date(dateStr), 'MMM dd')}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="p-3 bg-green-50 border border-green-200 rounded-md">
+                        <p className="text-green-800 text-xs">
+                          <Shield className="w-3 h-3 inline mr-1" /> <strong>Smart Protection:</strong> Locations with active bookings will be automatically protected.
+                        </p>
+                      </div>
+                      <p className="text-xs text-muted-foreground">This action cannot be undone.</p>
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleSelectiveDateDelete}>
+                      Delete Selected Dates
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
+
+          {/* Selection Mode Status */}
+          {isSelectingDatesMode && (
+            <div className="flex items-center gap-2 p-3 bg-orange-50 border border-orange-200 rounded-md">
+              <CalendarIcon className="w-4 h-4 text-orange-600" />
+              <span className="text-xs text-orange-800">
+                <strong>Date Selection Mode:</strong> Click calendar dates to select them for deletion. {selectedDatesForDeletion.length} date{selectedDatesForDeletion.length !== 1 ? 's' : ''} selected.
+              </span>
+            </div>
+          )}
+
+        </div>
+      </motion.div>
+
       {/* Calendar - Full Width */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
+        transition={{ delay: 0.3 }}
       >
         <Card className="h-full">
           <CardHeader>
@@ -1547,7 +2385,8 @@ const ManageLocationPage: React.FC = () => {
             <div className="border rounded-lg overflow-hidden">
               <CustomCalendar
                 events={calendarEvents}
-                onDateClick={handleDateClick}
+                onDateClick={handleDateClickForSelection}
+                onMonthChange={setCalendarCurrentMonth}
                 showNavigation={true}
                 showLegend={false}
                 cellHeight="min-h-[120px]"
@@ -1556,6 +2395,8 @@ const ManageLocationPage: React.FC = () => {
                   const dateStr = date.toLocaleDateString('en-CA');
                   return eventCounts[dateStr] || 0;
                 }}
+                selectedDates={isSelectingDatesMode ? selectedDatesForDeletion : []}
+                isSelectionMode={isSelectingDatesMode}
               />
             </div>
           </CardContent>
@@ -2085,6 +2926,49 @@ const ManageLocationPage: React.FC = () => {
               <FileDown className="w-4 h-4" />
               Download PDF
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Progress Modal */}
+      <Dialog open={showProgressModal} onOpenChange={() => {}}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {progressOperation === 'add' ? (
+                <>
+                  <Plus className="w-5 h-5 text-blue-600" />
+                  Adding Locations
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-5 h-5 text-red-600" />
+                  Deleting Locations
+                </>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              {progressOperation === 'add' 
+                ? 'Adding location availability data to the system...'
+                : 'Removing location availability data from the system...'
+              }
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            {/* Progress Bar */}
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">{progressText}</span>
+                <span className="font-medium">{progressValue}%</span>
+              </div>
+              <Progress value={progressValue} className="w-full" />
+            </div>
+            
+            {/* Status Message */}
+            <div className="text-center text-sm text-gray-500">
+              Please wait while the operation completes...
+            </div>
           </div>
         </DialogContent>
       </Dialog>

@@ -64,14 +64,13 @@ const Dashboard: React.FC = () => {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [readNotifications, setReadNotifications] = useState<Set<string>>(new Set());
   const [totalSystemEvents, setTotalSystemEvents] = useState(0);
-  const [forceUpdate, setForceUpdate] = useState(0);
   
   // Get current user data
   const currentUser = JSON.parse(localStorage.getItem('userData') || '{}');
   const userId = currentUser._id || currentUser.id || 'unknown';
   
-  // Initialize Socket.IO for real-time notifications
-  const { onNewNotification, offNewNotification, onNotificationRead, offNotificationRead } = useSocket(userId);
+  // Initialize Socket.IO for real-time read status updates only (popups handled by GlobalNotificationSystem)
+  const { onNotificationRead, offNotificationRead } = useSocket(userId);
 
   // Helper function to format time
   const formatTime = (time: string) => {
@@ -419,63 +418,39 @@ const Dashboard: React.FC = () => {
     loadReadNotifications();
   }, []);
 
+  // Listen for global notification events from GlobalNotificationSystem
+  useEffect(() => {
+    const handleGlobalNotificationUpdate = (event: any) => {
+      console.log('📢 Dashboard received global notification update:', event.detail);
+      if (event.detail.type === 'new') {
+        // Refresh notifications when new notification arrives
+        setTimeout(() => {
+          fetchEventsAndNotifications().then(() => {
+            console.log('✅ Dashboard refreshed from global notification');
+            loadReadNotifications();
+          });
+        }, 500);
+      }
+    };
+
+    window.addEventListener('notificationUpdate', handleGlobalNotificationUpdate);
+    
+    return () => {
+      window.removeEventListener('notificationUpdate', handleGlobalNotificationUpdate);
+    };
+  }, []);
+
   console.log('🔧 About to set up notification listeners useEffect...');
   
-  // Real-time notification listeners
+  // Real-time notification read status listener (new notifications handled by GlobalNotificationSystem)
   useEffect(() => {
-    console.log('🔔 Setting up real-time notification listeners for userId:', userId);
-    console.log('🔍 Socket functions available:', {
-      onNewNotification: typeof onNewNotification,
-      offNewNotification: typeof offNewNotification,
-      onNotificationRead: typeof onNotificationRead,
-      offNotificationRead: typeof offNotificationRead
-    });
+    console.log('🔔 Setting up notification read status listener for userId:', userId);
     
-    // Check if functions are actually available
-    if (!onNewNotification || !onNotificationRead) {
-      console.error('❌ Socket functions not available!', {
-        onNewNotification: !!onNewNotification,
-        onNotificationRead: !!onNotificationRead
-      });
+    // Check if functions are available
+    if (!onNotificationRead) {
+      console.error('❌ onNotificationRead function not available!');
       return;
     }
-
-    // Listen for new notifications
-    const handleNewNotification = (data: any) => {
-      console.log('🔔 Received new notification:', data);
-      console.log('🔄 Current notification state before update:', {
-        notificationCount: notifications.length,
-        unreadCount: getUnreadCount(notifications),
-        readNotificationsSize: readNotifications.size
-      });
-      
-      // Force immediate refresh of notifications and events
-      console.log('🔄 Triggering immediate notification refresh...');
-      fetchEventsAndNotifications().then(() => {
-        console.log('✅ Immediate refresh completed');
-        console.log('🔄 New notification state:', {
-          notificationCount: notifications.length,
-          unreadCount: getUnreadCount(notifications)
-        });
-      });
-      
-      // Also trigger delayed refresh to ensure backend processing is complete
-      setTimeout(() => {
-        console.log('🔄 Executing delayed notification refresh...');
-        fetchEventsAndNotifications().then(() => {
-          console.log('✅ Delayed refresh completed');
-          loadReadNotifications();
-        });
-      }, 1000); // Increased delay to ensure backend processing is complete
-      
-      // Force UI update
-      setForceUpdate(prev => prev + 1);
-      
-      // Dispatch global event for other components (like sidebar badge)
-      window.dispatchEvent(new CustomEvent('notificationUpdate', { 
-        detail: { type: 'new', data } 
-      }));
-    };
 
     // Listen for notification read events (from other devices/sessions)
     const handleNotificationRead = (data: any) => {
@@ -495,20 +470,17 @@ const Dashboard: React.FC = () => {
       }
     };
 
-    // Set up listeners
-    console.log('🔧 Calling onNewNotification...');
-    onNewNotification(handleNewNotification);
-    console.log('🔧 Calling onNotificationRead...');
+    // Set up listener
+    console.log('🔧 Setting up onNotificationRead listener...');
     onNotificationRead(handleNotificationRead);
-    console.log('✅ Notification listeners setup complete');
+    console.log('✅ Notification read listener setup complete');
 
-    // Cleanup listeners on unmount
+    // Cleanup listener on unmount
     return () => {
-      console.log('🔕 Cleaning up notification listeners');
-      offNewNotification();
+      console.log('🔕 Cleaning up notification read listener');
       offNotificationRead();
     };
-  }, [userId]); // Remove function dependencies to prevent infinite re-renders
+  }, [userId]);
 
 
   return (

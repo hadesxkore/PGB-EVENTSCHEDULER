@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import ResourceAvailability from '../models/ResourceAvailability.js';
 import Department from '../models/Department.js';
+import Event from '../models/Event.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -228,6 +229,154 @@ router.delete('/availability/:departmentId/:requirementId/:date', authenticateTo
     res.json({ message: 'Availability deleted successfully' });
   } catch (error) {
     console.error('Error deleting availability:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete ALL availability data for a department on a specific date
+router.delete('/department/:departmentId/date/:date', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const { departmentId, date } = req.params;
+
+    console.log(`🗑️ Deleting all availability data for department ${departmentId} on date ${date}`);
+
+    const result = await ResourceAvailability.deleteMany({
+      departmentId,
+      date
+    });
+
+    console.log(`✅ Deleted ${result.deletedCount} availability records for ${date}`);
+
+    res.json({ 
+      message: 'All availability data deleted successfully for the specified date',
+      deletedCount: result.deletedCount,
+      date: date,
+      departmentId: departmentId
+    });
+  } catch (error) {
+    console.error('Error deleting all availability data for date:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Bulk delete availability data for a department across multiple dates (with booking protection)
+router.delete('/department/:departmentId/bulk-dates', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const { departmentId } = req.params;
+    const { dates } = req.body; // Array of date strings
+
+    if (!dates || !Array.isArray(dates)) {
+      return res.status(400).json({ 
+        message: 'Dates array is required in request body' 
+      });
+    }
+
+    console.log(`🗑️ Bulk deleting availability data for department ${departmentId} across ${dates.length} dates`);
+
+    // Get department info to check for tagged events
+    const department = await Department.findById(departmentId);
+    if (!department) {
+      return res.status(404).json({ message: 'Department not found' });
+    }
+
+    let totalDeleted = 0;
+    let protectedDates = 0;
+    const results: any[] = [];
+    const protectedDatesList: string[] = [];
+
+    for (const date of dates) {
+      try {
+        // Check if there are any active bookings (events) for this department on this date
+        const dateObj = new Date(date);
+        const nextDateObj = new Date(dateObj);
+        nextDateObj.setDate(nextDateObj.getDate() + 1);
+
+        const activeBookings = await Event.find({
+          taggedDepartments: department.name,
+          status: { $in: ['submitted', 'approved'] }, // Only check active bookings
+          $or: [
+            // Event starts on this date
+            {
+              startDate: {
+                $gte: dateObj,
+                $lt: nextDateObj
+              }
+            },
+            // Event ends on this date
+            {
+              endDate: {
+                $gte: dateObj,
+                $lt: nextDateObj
+              }
+            },
+            // Event spans across this date
+            {
+              startDate: { $lte: dateObj },
+              endDate: { $gte: dateObj }
+            }
+          ]
+        });
+
+        if (activeBookings.length > 0) {
+          // Protect this date - don't delete availability data
+          protectedDates++;
+          protectedDatesList.push(date);
+          results.push({
+            date,
+            deletedCount: 0,
+            success: false,
+            protected: true,
+            reason: `Protected: ${activeBookings.length} active booking(s) found`,
+            bookings: activeBookings.map(event => ({
+              eventTitle: event.eventTitle,
+              status: event.status,
+              startDate: event.startDate,
+              endDate: event.endDate
+            }))
+          });
+
+          console.log(`🛡️ Protected ${date}: ${activeBookings.length} active booking(s) found`);
+        } else {
+          // Safe to delete - no active bookings
+          const result = await ResourceAvailability.deleteMany({
+            departmentId,
+            date
+          });
+
+          totalDeleted += result.deletedCount;
+          results.push({
+            date,
+            deletedCount: result.deletedCount,
+            success: true,
+            protected: false
+          });
+
+          console.log(`✅ Deleted ${result.deletedCount} records for ${date}`);
+        }
+      } catch (error) {
+        console.error(`❌ Error processing ${date}:`, error);
+        results.push({
+          date,
+          deletedCount: 0,
+          success: false,
+          protected: false,
+          error: (error as Error).message
+        });
+      }
+    }
+
+    console.log(`🎯 Bulk delete completed: ${totalDeleted} records deleted, ${protectedDates} dates protected`);
+
+    res.json({ 
+      message: 'Bulk delete completed with booking protection',
+      totalDeleted,
+      protectedDates,
+      processedDates: dates.length,
+      protectedDatesList,
+      results
+    });
+  } catch (error) {
+    console.error('Error in bulk delete operation:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
